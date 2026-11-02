@@ -51,6 +51,17 @@ Each finding says whether the problem is established (`definite`) or whether saf
 be proven (`possible`). Rules and their known blind spots are in
 [`PINE_PLAN.md` §6](PINE_PLAN.md#6-lint-soundness).
 
+Checking `pine.ta` against TradingView (the step that turns "unverified" into "verified"): add
+`tools/reference_capture.pine` to a chart, export chart data, write a manifest from
+`tools/reference_capture.example.yaml`, then:
+
+```bash
+uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml
+```
+
+It reports aligned-mode parity for every core built-in and which `na`-handling hypothesis
+TradingView follows. See [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps).
+
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
 manifest describing how it was produced; see `src/pine/manifest.py`.
 
@@ -59,8 +70,9 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 - **No external verification yet.** Every built-in is checked against closed-form cases and
   property tests derived from the same reading of the Pine manual; none against TradingView
   output. Treat results as unverified.
-- **`na` inside windows** may be handled differently by TradingView (skip vs propagate). Gap-free
-  data is unaffected.
+- **`na` inside windows** may be handled differently by TradingView. Three hypotheses are
+  implemented (`na_policy`); the default `propagate` is unconfirmed until a capture export
+  decides. Gap-free data is unaffected.
 - **Tolerances** assume full-precision inputs; rounded OHLC in an export is not yet accounted for.
 - **Lint** does not trace user variables or resolve `if` blocks for alert gating; its precision
   on real scripts is unmeasured. Parity reports are Markdown only.

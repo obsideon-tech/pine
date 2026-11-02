@@ -1,0 +1,20 @@
+# Manifest template for an export of tools/reference_capture.pine (PINE_PLAN.md §7.1, §10 A1).
+# Copy next to the export (same basename, .yaml) and replace every value marked CHANGE.
+source: tradingview_export
+symbol_class: public
+symbol: "EXCHANGE:SYMBOL"        # CHANGE
+timeframe: "60"                  # CHANGE: chart timeframe, Pine spelling
+session: regular                 # CHANGE: regular | extended
+timezone: America/New_York       # CHANGE: exchange time zone (IANA)
+adjustment: splits_dividends     # CHANGE: none | splits | splits_dividends
+chart_type: candles
+pine_version: 6
+export_date: 2026-11-03          # CHANGE
+timestamp_convention: bar_open
+displayed_precision: 10          # CHANGE: decimals actually printed in the export
+indicator:
+  name: pine reference capture
+  inputs: {LEN: 14, HL_LEN: 20, FAST: 9, SLOW: 21, GAP_PERIOD: 50, GAP_WIDTH: 3}
+notes: >
+  CHANGE: which coverage-matrix row this export covers (PINE_PLAN.md §10 A1), and anything
+  unusual about the chart.

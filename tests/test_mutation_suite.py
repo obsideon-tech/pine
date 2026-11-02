@@ -298,3 +298,27 @@ def test_crossover_near_ties_are_excused_not_hidden():
     r = compare_discrete(alt, ref, excuse=near_tie(a, b, tol))
     assert r.passed and r.excused == 1 and r.excused_bars == (3,)
     assert not compare_discrete(alt, ref).passed
+
+
+# ---------- na policy (PINE_PLAN §10 A2): the harness must separate the hypotheses ----------
+
+POLICY_CASES = [
+    # (indicator, mutant policy, expected first divergence relative to the gap, type)
+    *[(n, "skip", 0, "na") for n in ("sma", "ema", "rma", "stdev", "highest", "lowest", "rsi")],
+    *[(n, "skip_na_out", 1, "na") for n in ("sma", "ema", "rma", "stdev", "highest", "lowest")],
+    # RSI: the change is na at the gap bar and the bar after, so skip_na_out first differs
+    # two bars after the gap.
+    ("rsi", "skip_na_out", 2, "na"),
+]
+
+
+@pytest.mark.parametrize(
+    "name, policy, offset, dtype", POLICY_CASES, ids=[f"{c[0]}-{c[1]}" for c in POLICY_CASES]
+)
+def test_na_policy_mutant_detected(close, name, policy, offset, dtype):
+    x = close.copy()
+    x[NA_AT] = np.nan
+    ref = REF[name](x, L)  # propagate (current default)
+    r = compare_series(REF[name](x, L, na_policy=policy), ref, kind=KIND[name])
+    assert not r.passed
+    assert (r.first_divergence, r.divergence_type) == (NA_AT + offset, dtype)

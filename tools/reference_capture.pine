@@ -1,0 +1,58 @@
+//@version=6
+// pine reference capture (PINE_PLAN.md §10 A1, A2)
+//
+// Plots every core built-in with fixed inputs so one chart export provides TradingView
+// reference values (oracle (c), §5.8) for pine.ta, and settles how `na` inside a window is
+// handled (§10 A2). Self-written and public; contains no proprietary logic.
+//
+// Use: add to a chart, then "Export chart data..." with the chart's full loaded history.
+// Check with:  uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml
+//
+// Plot titles become export column names. Titles and constants must match
+// src/pine/reference.py; tests/test_reference.py enforces this.
+indicator("pine reference capture", overlay = false, precision = 10)
+
+const int LEN = 14
+const int HL_LEN = 20
+const int FAST = 9
+const int SLOW = 21
+const int GAP_PERIOD = 50
+const int GAP_WIDTH = 3
+
+// A source with `na` in the last GAP_WIDTH bars of every GAP_PERIOD bars. It is plotted, so
+// Python reads it from the export instead of reconstructing it; the Python check of this
+// column against bar_index doubles as a history-alignment check (§5.4).
+float srcNa = bar_index % GAP_PERIOD >= GAP_PERIOD - GAP_WIDTH ? na : close
+
+emaFast = ta.ema(close, FAST)
+emaSlow = ta.ema(close, SLOW)
+
+// Gap-free source (close, high, low).
+plot(ta.sma(close, LEN), "sma")
+plot(ta.ema(close, LEN), "ema")
+plot(ta.rma(close, LEN), "rma")
+plot(ta.rsi(close, LEN), "rsi")
+plot(ta.stdev(close, LEN), "stdev")
+plot(ta.stdev(close, LEN, false), "stdev_sample")
+plot(ta.highest(high, HL_LEN), "highest")
+plot(ta.lowest(low, HL_LEN), "lowest")
+plot(ta.atr(LEN), "atr")
+plot(ta.tr, "tr")
+plot(ta.tr(true), "tr_handle_na")
+
+// Crossover inputs are plotted so the crossover check can use TradingView's own EMAs and
+// test the crossover logic in isolation.
+plot(emaFast, "ema_fast")
+plot(emaSlow, "ema_slow")
+plot(ta.crossover(emaFast, emaSlow) ? 1 : 0, "crossover")
+plot(ta.crossunder(emaFast, emaSlow) ? 1 : 0, "crossunder")
+
+// Source with gaps: which na policy does each built-in follow?
+plot(srcNa, "src_na")
+plot(ta.sma(srcNa, LEN), "sma_na")
+plot(ta.ema(srcNa, LEN), "ema_na")
+plot(ta.rma(srcNa, LEN), "rma_na")
+plot(ta.rsi(srcNa, LEN), "rsi_na")
+plot(ta.stdev(srcNa, LEN), "stdev_na")
+plot(ta.highest(srcNa, HL_LEN), "highest_na")
+plot(ta.lowest(srcNa, HL_LEN), "lowest_na")

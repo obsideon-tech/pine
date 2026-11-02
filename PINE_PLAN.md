@@ -213,8 +213,9 @@ export-derived value in the test docstring:
   returns `na` on the first bar **(unverified)**;
 - `ta.crossover`/`crossunder`: comparisons with `na` are false, so output is never `na`
   (v6 semantics; v5 may differ);
-- **possible systematic difference:** recent manual pages may say that `na` values in
-  `source` are *ignored*, with the window extending back over `length` non-`na` values. If
+- **possible systematic difference** (now testable: `na_policy` and the capture script's
+  `*_na` columns, §10 A2): recent manual pages may say that `na` values in `source` are
+  *ignored*, with the window extending back over `length` non-`na` values. If
   so, the propagate-`na` behaviour used here for `sma`, `ema`, `rma`, `stdev`, `highest` and
   `lowest` is wrong at gaps (it is unaffected on gap-free data). Settle with an export of a
   series containing `na` before any consumer relies on behaviour at gaps;
@@ -454,11 +455,21 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Done when:_ `tools/reference_capture.pine` exists, and every core built-in passes
         `check_export` in aligned mode on every row of the §10 A1 matrix, each export with a
         manifest (numbers only or kept local, per the terms item).
+      - _Progress 2026-11-03:_ **tooling done** — `tools/reference_capture.pine` (31 plots),
+        `python -m pine.reference EXPORT.csv --manifest EXPORT.yaml`, manifest template
+        `tools/reference_capture.example.yaml`. Consistency tests tie the Pine constants and
+        plot titles to `pine.reference`; the script is lint-clean. Synthetic end-to-end tests
+        prove the plumbing only. **Remaining: the exports themselves (owner action).**
 - [ ] **[high] A2 — `na_policy` switch and the opposite-policy mutant** (§10 A2)
       - _Raised:_ 2026-11-03
       - _Why:_ the `na`-window rule is the single most consequential unverified semantic.
       - _Done when:_ both policies implemented, the mutant is detected, and an export with `na`
         selects one; the switch is then removed.
+      - _Progress 2026-11-03:_ **switch and mutants done** — three hypotheses (`propagate`,
+        `skip`, `skip_na_out`) on `sma/ema/rma/rsi/stdev/highest/lowest`; 14 policy mutants
+        detected at predicted bars; each `*_na` capture column discriminates all three (a
+        synthetic export under any one policy matches that policy only). Default stays
+        `propagate`. **Remaining: one real capture export to decide.**
 - [ ] **[high] A3 — Input-rounding-aware tolerances** (§10 A3)
       - _Raised:_ 2026-11-03
       - _Why:_ rounded OHLC in an export produces output error the current floor ignores.
@@ -543,6 +554,25 @@ any built-in is called "verified":
 
 Tradeoff: one capture script is fast but couples every built-in to one chart setup; the matrix
 rows compensate. Export terms are still open, so commit numbers only or keep files local.
+
+**How to run A1/A2 (owner):** add `tools/reference_capture.pine` to a chart for one matrix
+row; export chart data with the chart's full loaded history; save the CSV and a manifest
+copied from `tools/reference_capture.example.yaml` locally (not committed until the terms
+item is settled); run `uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml`.
+The output has two parts:
+
+- *Gap-free columns* in aligned mode. `src_na` doubles as the history-alignment check
+  (§5.4): its gap pattern is keyed to `bar_index`, so a truncated export fails it, and then
+  every other result is suspect. `stdev` vs `stdev_sample` settles the `biased` default:
+  whichever column our population port matches is the default. Crossover is checked on the
+  exported EMAs, isolating crossover logic, as exact 0/1 until §10 B2.
+- *na policy*: for each `*_na` column, which of the three hypotheses matches. "none" means a
+  fourth behaviour (record it and its first divergent bars); different answers per built-in
+  are possible and reported as such.
+
+Expected design limit: the capture script uses one set of lengths (14/20/9/21). A length-
+dependent bug (e.g. an off-by-one only for even lengths) would not show; add a second capture
+with different constants if any built-in's code branches on length.
 
 **A2. Settle the `na`-window rule empirically.** Until an export decides, give the window
 functions an `na_policy` (`"propagate"` as now, `"skip"` = extend the window back over `length`
