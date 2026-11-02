@@ -153,14 +153,26 @@ The harness is itself a measurement instrument and needs a measured detection ra
 P2's single "seed changed" check becomes a suite of deliberate defects applied to correct
 ports:
 
-| Mutation | Expected detection |
-|---|---|
-| seeding rule swapped (SMA seed ↔ first-value seed) | first non-`na` bar, aligned mode |
-| length ± 1 | na-mask mismatch at warm-up boundary |
-| `stdev` sample ↔ population | first non-`na` bar |
-| one-bar look-ahead (`x[−1]`) | first bar |
-| `na` → 0 substitution | first `na` bar of the input |
-| first bar dropped | na-mask mismatch, or convergence-mode warning |
+Let `w` be the first non-`na` bar of the correct output (`length − 1` for SMA/EMA/RMA,
+`length` for RSI). Implemented in `tests/test_mutation_suite.py`; all cases pass (2026-11-03).
+
+| Mutation | Expected first divergence | Status |
+|---|---|---|
+| seed swapped (SMA seed → first-value seed), EMA/RMA/RSI | bar `w`, value | ✅ |
+| length + 1 | bar `w`, na-mask | ✅ sma, ema, rma, rsi |
+| length − 1 | bar `w − 1`, na-mask | ✅ |
+| one-bar look-ahead (`py[t] = ref[t+1]`) | bar `w − 1`, na-mask (shows up as early output, not "first bar") | ✅ |
+| `na` → 0 substitution on an input gap | the gap bar, na-mask | ✅ |
+| first bar dropped | bar `w`, na-mask | ✅ |
+| `stdev` sample ↔ population | bar `w`, value | pending `ta.stdev` |
+
+Negative controls (must **not** be flagged): SMA via cumulative sums and EMA rearranged as
+`prev + α(x − prev)` both pass, with max error < 1e-10 on the fixture. A further test
+demonstrates the §5.3 hazard: the seed mutant passes in convergence mode once
+`convergence_bars` bars are excluded, and fails in aligned mode.
+
+Observation: every case except the seed swap is caught by the **na mask**, not by values. The
+na-mask check carries most of the suite's detection power, so it must never be relaxed.
 
 P2 is done when every mutation is detected at its expected bar. New mutations are added
 whenever a real porting bug is found that the suite would have missed.
@@ -170,7 +182,13 @@ whenever a real porting bug is found that the suite would have missed.
 Each item gets a source citation (TradingView reference manual URL and date) or an
 export-derived value in the test docstring:
 
-- seeding of `ta.ema` versus `ta.rma` (SMA seed versus first-value seed);
+- seeding of `ta.ema` versus `ta.rma` (SMA seed versus first-value seed). Implemented as SMA
+  seed for both, re-seeding after `na`, per the recalled manual code **(unverified)**;
+- `ta.sma` summation: implemented newest-first with each term divided by `length`, per the
+  recalled manual code; the built-in may sum differently (§5.6). Effect is < 1e-10 on the
+  fixture, so not material at the default tolerances;
+- `ta.rsi` zero branches: `down == 0 → 100` checked before `up == 0 → 0`, so a flat series
+  gives 100 **(unverified)**;
 - `ta.stdev`'s `biased` default (believed `true`, i.e. population) **(unverified)**;
 - `na` inside a window for `ta.sma`, `ta.highest`, `ta.lowest` (propagate versus skip);
 - `ta.atr` true-range definition on the first bar;
@@ -296,12 +314,18 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Done when:_ the owner has decided and, if rewriting, force-pushed `main` themselves.
         An agent does not force-push `main` without an explicit go-ahead.
 - [ ] **[high] Create the repo structure and run P0–P3 per the §7.5 cut order in a cloud session**
-      - _Progress 2026-11-03:_ P0 built — `pine.Bars`, `pine.io` TradingView CSV loader/writer
-        (byte-exact round trip on both synthetic fixtures, float64-exact by property test),
-        `pine.manifest` validator, synthetic fixtures + generator, CI workflow with actions
-        pinned by SHA. Open P0 gap: the loader's column layout is assumed, not checked against
-        a real export (see the export-precision item).
       — uses the expiring cloud credit on public-safe work.
+      - _Progress 2026-11-03:_ **P0 built** — `pine.Bars`, `pine.io` TradingView CSV
+        loader/writer (byte-exact round trip on both synthetic fixtures, float64-exact by
+        property test), `pine.manifest` validator, synthetic fixtures + generator, CI workflow
+        with actions pinned by SHA. Open P0 gap: the loader's column layout is assumed, not
+        checked against a real export.
+      - _Progress 2026-11-03:_ **P2 built on `sma`, `ema`, `rma`, `rsi`** — `pine.ta` (literal
+        ports of the manual's reference code), `pine.parity` (§5.1–5.7: tolerance classes with
+        printed-precision floor, na-mask first, aligned/convergence modes, discrete compare with
+        near-tie excusal, Markdown report, `check_export`), mutation suite (§5.9) in CI.
+        Built-ins meet oracles (a) and (b) only; (c) awaits a real export, so none is
+        "verified" under §5.8 yet. HTML report deferred; Markdown only.
       - _Raised:_ 2026-11-03
       - _Why:_ the credit expires 2026-11-05.
       - _Done when:_ CI green and `pytest` collecting tests for `ta`, `parity` (incl. mutation
@@ -318,15 +342,15 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Raised:_ 2026-11-03
       - _Why:_ a public repo with redistributed data that the terms forbid is a takedown risk.
       - _Done when:_ a recorded answer in the `pine` README's data section.
-- [ ] **[med] Mutation suite as P2's exit criterion** (§5.9)
+- [x] **[med] Mutation suite as P2's exit criterion** (§5.9) — done 2026-11-03 except the
+      `stdev` case, which waits for `ta.stdev`.
+- [x] **[med] Fixture manifest schema and validator in P0** (§7.1) — done 2026-11-03.
+- [ ] **[high] Commit TradingView reference values for `sma`, `ema`, `rma`, `rsi`**
       - _Raised:_ 2026-11-03
-      - _Why:_ one mutation does not measure the harness's sensitivity.
-      - _Done when:_ all listed mutations detected at expected bars, in CI.
-- [ ] **[med] Fixture manifest schema and validator in P0** (§7.1)
-      - _Raised:_ 2026-11-03
-      - _Why:_ parity against an export with unknown adjustment, session or chart type is
-        uninterpretable.
-      - _Done when:_ the validator rejects a fixture with a missing field.
+      - _Why:_ the two-oracle rule (§5.8) needs oracle (c); without it the ports are checked
+        only against their own reading of the manual, which shares any misremembering.
+      - _Done when:_ one export (or numbers-only values, per the terms item) for each, with a
+        manifest, passing `check_export` in aligned mode.
 - [ ] **[med] Offset-aware `lookahead_on` rule** (§6.2)
       - _Raised:_ 2026-11-03
       - _Why:_ the naive rule flags the standard safe idiom.

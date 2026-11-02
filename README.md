@@ -1,8 +1,10 @@
 # pine
 Port TradingView indicators, with a check that the Python output matches Pine bar for bar before you trust it.
 
-**Status:** pre-alpha. P0 done: bar schema, TradingView CSV loader, fixture manifests. No
-indicators or parity harness yet. See [`PINE_PLAN.md`](PINE_PLAN.md).
+**Status:** pre-alpha. Done: bar schema, TradingView CSV loader, fixture manifests, parity
+harness with mutation suite, and `ta.sma`, `ta.ema`, `ta.rma`, `ta.rsi`. The four built-ins
+pass closed-form and property tests but have **not yet been checked against TradingView
+output**; do not rely on them until they have. See [`PINE_PLAN.md`](PINE_PLAN.md).
 
 ```bash
 uv sync
@@ -16,9 +18,19 @@ uv run pytest
 from pine.io import load_tradingview_csv
 
 exp = load_tradingview_csv("chart.csv", timeframe="60", session_tz="America/New_York")
-exp.bars.close            # float64, read-only
-exp.columns["RSI"]        # plotted indicator columns by title
-exp.observed_decimals     # printed precision per column (sets the tolerance floor)
+exp.bars.close  # float64, read-only
+exp.columns["RSI"]  # plotted indicator columns by title
+exp.observed_decimals  # printed precision per column (sets the tolerance floor)
+```
+
+```python
+from pine import ta
+from pine.parity import PortSpec, check_export
+
+report = check_export(exp, {
+    "RSI": PortSpec(fn=lambda b: ta.rsi(b.close, 14), kind="bounded"),
+})
+print(report.to_markdown())   # na-mask mismatches, first divergent bar, error metrics
 ```
 
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
