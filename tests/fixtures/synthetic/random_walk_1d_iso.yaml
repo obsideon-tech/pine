@@ -1,0 +1,13 @@
+source: synthetic
+symbol_class: synthetic
+timeframe: "1D"
+session: regular
+timezone: America/New_York
+adjustment: none
+chart_type: candles
+pine_version: 6
+export_date: 2026-11-03
+timestamp_convention: bar_open
+displayed_precision: null
+indicator: null
+notes: Seeded random walk from tools/make_synthetic.py, ISO 8601 time column.

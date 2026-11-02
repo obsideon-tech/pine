@@ -1,0 +1,16 @@
+source: synthetic
+symbol_class: synthetic
+timeframe: "60"
+session: regular
+timezone: UTC
+adjustment: none
+chart_type: candles
+pine_version: 6
+export_date: 2026-11-03
+timestamp_convention: bar_open
+displayed_precision: null
+indicator: null
+notes: >
+  Seeded random walk from tools/make_synthetic.py. The "Plot" column is a placeholder
+  (close, na for the first 13 bars) used only to exercise the loader; it is not an
+  indicator reference value.

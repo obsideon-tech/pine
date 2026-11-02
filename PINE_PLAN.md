@@ -276,8 +276,9 @@ not an asset. Cut order if time runs short, keeping from the top:
 - **Seed bugs masked by warm-up exclusion.** Mitigated by aligned mode as the default (§5.3)
   and the mutation suite (§5.9).
 - **Lint false confidence.** Mitigated by the stated stance (§6.1); residual risk remains.
-- **Name.** `pine` on PyPI is probably taken; the import name can stay `pine` with a
-  distribution name such as `pine-parity`. Check before P0.
+- **Name.** Checked 2026-11-03: `pine` is taken on PyPI, `pine-parity` was free. The
+  distribution is `pine-parity`; the import name stays `pine`. Tradeoff: installing both
+  `pine` (PyPI) and `pine-parity` in one environment would clash on the import name.
 - **Pine version.** v5 or v6 as the target. Existing private scripts are v5; new public
   examples should be v6. Tradeoff: supporting both doubles the semantics to verify (§5.10).
 - **Private references in history.** The first revision of this file on `main` named private
@@ -295,6 +296,11 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Done when:_ the owner has decided and, if rewriting, force-pushed `main` themselves.
         An agent does not force-push `main` without an explicit go-ahead.
 - [ ] **[high] Create the repo structure and run P0–P3 per the §7.5 cut order in a cloud session**
+      - _Progress 2026-11-03:_ P0 built — `pine.Bars`, `pine.io` TradingView CSV loader/writer
+        (byte-exact round trip on both synthetic fixtures, float64-exact by property test),
+        `pine.manifest` validator, synthetic fixtures + generator, CI workflow with actions
+        pinned by SHA. Open P0 gap: the loader's column layout is assumed, not checked against
+        a real export (see the export-precision item).
       — uses the expiring cloud credit on public-safe work.
       - _Raised:_ 2026-11-03
       - _Why:_ the credit expires 2026-11-05.
@@ -325,7 +331,8 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Raised:_ 2026-11-03
       - _Why:_ the naive rule flags the standard safe idiom.
       - _Done when:_ the safe idiom is a passing negative fixture.
-- [ ] **[low] PyPI name check and trademark disclaimer** (§7.4, §8)
+- [x] **[low] PyPI name check and trademark disclaimer** (§7.4, §8) — `pine-parity`;
+      disclaimer in README. Name not yet *reserved* on PyPI (needs the owner's account).
       - _Raised:_ 2026-11-03
       - _Why:_ a name collision or trademark complaint after release is costlier than before.
       - _Done when:_ distribution name chosen; README disclaimer present.
