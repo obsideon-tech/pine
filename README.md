@@ -2,8 +2,8 @@
 Port TradingView indicators, with a check that the Python output matches Pine bar for bar before you trust it.
 
 **Status:** pre-alpha. Done: bar schema, TradingView CSV loader, fixture manifests, parity
-harness with mutation suite, and `ta.sma`, `ta.ema`, `ta.rma`, `ta.rsi`. The four built-ins
-pass closed-form and property tests but have **not yet been checked against TradingView
+harness with mutation suite, and `ta.sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`,
+`tr`, `atr`, `crossover`, `crossunder`. These pass closed-form and property tests but have **not yet been checked against TradingView
 output**; do not rely on them until they have. See [`PINE_PLAN.md`](PINE_PLAN.md).
 
 ```bash

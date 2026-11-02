@@ -182,3 +182,146 @@ def test_rsi_reflection_sums_to_100(x, n):
     ok = (r1 > 0) & (r1 < 100)
     np.testing.assert_allclose(r1[ok] + r2[ok], 100.0, atol=1e-8)
     assert math.isnan(r1[0])
+
+
+# ======================= stdev =======================
+
+
+def test_stdev_hand_values():
+    x = [1.0, 2.0, 3.0, 4.0]
+    assert ta.stdev(x, 4)[-1] == pytest.approx(math.sqrt(1.25), abs=1e-15)
+    assert ta.stdev(x, 4, biased=False)[-1] == pytest.approx(math.sqrt(5 / 3), abs=1e-15)
+    assert np.isnan(ta.stdev(x, 4)[:3]).all()
+
+
+def test_stdev_constant_is_exactly_zero():
+    # The 1e-10 deviation zeroing makes this exact even when the SMA has rounding error.
+    x = np.full(40, 0.1)
+    assert (ta.stdev(x, 7)[6:] == 0.0).all()
+
+
+def test_stdev_length_one_and_unbiased_guard():
+    assert (ta.stdev(np.arange(5.0), 1) == 0).all()
+    with pytest.raises(ValueError):
+        ta.stdev(np.arange(5.0), 1, biased=False)
+
+
+@settings(max_examples=60, deadline=None)
+@given(series, st.integers(2, 15), st.floats(-1e3, 1e3), st.floats(1e-2, 1e2))
+def test_stdev_properties(x, n, c, k):
+    s = ta.stdev(x, n)
+    np.testing.assert_allclose(ta.stdev(x + c, n), s, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(ta.stdev(k * x, n), k * s, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(ta.stdev(-x, n), s, rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(
+        ta.stdev(x, n, biased=False), s * math.sqrt(n / (n - 1)), rtol=1e-9, atol=1e-9
+    )
+    assert (s[n - 1 :] >= 0).all()
+
+
+# ======================= highest / lowest =======================
+
+
+def test_highest_lowest_on_ramp():
+    t = np.arange(30.0)
+    np.testing.assert_array_equal(ta.highest(t, 5)[4:], t[4:])
+    np.testing.assert_array_equal(ta.lowest(t, 5)[4:], t[:-4])
+    assert np.isnan(ta.highest(t, 5)[:4]).all() and np.isnan(ta.lowest(t, 5)[:4]).all()
+
+
+def test_highest_na_in_window_propagates():
+    x = np.arange(20.0)
+    x[10] = np.nan
+    out = ta.highest(x, 3)
+    assert np.isnan(out[10:13]).all() and not np.isnan(out[13:]).any()
+
+
+@settings(max_examples=60, deadline=None)
+@given(series, lengths)
+def test_highest_lowest_properties(x, n):
+    hi, lo = ta.highest(x, n), ta.lowest(x, n)
+    np.testing.assert_array_equal(ta.highest(-x, n), -lo)
+    w = slice(n - 1, None)
+    assert (lo[w] <= x[w]).all() and (x[w] <= hi[w]).all()
+    assert (lo[w] <= ta.sma(x, n)[w] + 1e-9).all() and (ta.sma(x, n)[w] <= hi[w] + 1e-9).all()
+    if n == 1:
+        np.testing.assert_array_equal(hi, x)
+
+
+# ======================= tr / atr =======================
+
+
+def _bars(rng, n=60, gap=1.0):
+    c = 100 + np.cumsum(rng.normal(0, 1, n))
+    o = np.concatenate([[100.0], c[:-1]]) + rng.normal(0, gap, n)
+    h = np.maximum(o, c) + np.abs(rng.normal(0, 0.3, n))
+    lo = np.minimum(o, c) - np.abs(rng.normal(0, 0.3, n))
+    return h, lo, c
+
+
+def test_tr_first_bar_and_gap_terms():
+    h, lo, c = np.array([10.0, 15.0]), np.array([9.0, 14.0]), np.array([9.5, 14.5])
+    assert np.isnan(ta.tr(h, lo, c)[0])
+    assert ta.tr(h, lo, c, handle_na=True)[0] == 1.0
+    assert ta.tr(h, lo, c)[1] == 15.0 - 9.5  # gap up: |high - close[1]| dominates
+
+
+def test_atr_constant_range_without_gaps():
+    n = 40
+    c = np.full(n, 100.0)
+    h, lo = c + 1.5, c - 1.5
+    out = ta.atr(h, lo, c, 14)
+    assert np.isnan(out[:13]).all()
+    np.testing.assert_allclose(out[13:], 3.0, atol=1e-12)
+
+
+def test_atr_equals_rma_of_tr_with_first_bar_high_low():
+    h, lo, c = _bars(np.random.default_rng(5))
+    expected = ta.rma(ta.tr(h, lo, c, handle_na=True), 14)
+    np.testing.assert_allclose(ta.atr(h, lo, c, 14), expected, rtol=0, atol=1e-12)
+
+
+def test_atr_na_close_makes_next_true_range_na():
+    h, lo, c = _bars(np.random.default_rng(6))
+    c[30] = np.nan
+    out = ta.atr(h, lo, c, 5)
+    assert not np.isnan(out[30]) and np.isnan(out[31:36]).all() and not np.isnan(out[36])
+
+
+@settings(max_examples=40, deadline=None)
+@given(st.integers(0, 10_000), st.integers(1, 15), st.floats(-50, 50), st.floats(0.1, 10))
+def test_atr_translation_and_scale(seed, n, c0, k):
+    h, lo, c = _bars(np.random.default_rng(seed))
+    a = ta.atr(h, lo, c, n)
+    np.testing.assert_allclose(ta.atr(h + c0, lo + c0, c + c0, n), a, rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(ta.atr(k * h, k * lo, k * c, n), k * a, rtol=1e-9, atol=1e-9)
+    assert (a[n - 1 :] > 0).all()
+
+
+# ======================= crossover / crossunder =======================
+
+
+def test_crossover_hand_example():
+    a = [1.0, 2.0, 1.0, 1.5, 3.0]
+    b = [1.5, 1.5, 1.5, 1.5, 1.5]
+    # a[3] == b[3] is not "above"; bar 4 crosses from equal (a[1] <= b[1]) to above.
+    np.testing.assert_array_equal(ta.crossover(a, b), [False, True, False, False, True])
+    np.testing.assert_array_equal(ta.crossunder(a, b), [False, False, True, False, False])
+
+
+def test_crossover_scalar_level_and_na_is_false():
+    a = np.array([20.0, 35.0, np.nan, 25.0, 31.0])
+    np.testing.assert_array_equal(ta.crossover(a, 30), [False, True, False, False, True])
+    assert ta.crossover(a, 30).dtype == bool
+
+
+@settings(max_examples=60, deadline=None)
+@given(series, series)
+def test_crossover_properties(a, b):
+    m = min(a.size, b.size)
+    a, b = a[:m], b[:m]
+    co, cu = ta.crossover(a, b), ta.crossunder(a, b)
+    np.testing.assert_array_equal(co, ta.crossunder(b, a))
+    assert not co[0] and not cu[0]
+    assert not (co & cu).any()
+    assert not (co[1:] & co[:-1]).any()  # cannot cross over on two consecutive bars

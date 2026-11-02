@@ -46,6 +46,24 @@ def main() -> int:
     )
     write_tradingview_csv(exp, OUT / "random_walk_60.csv")
 
+    # Opens gap away from the previous close, so true range differs from high - low.
+    # Without gaps an ATR port that ignores close[1] is indistinguishable from a correct one.
+    rng = np.random.default_rng(42)
+    g = random_walk_bars(n=300, seed=99, timeframe="60", start=1_767_225_600, step=3600)
+    gap_open = np.round(np.concatenate([[100.0], g.close[:-1]]) + rng.normal(0.0, 1.5, len(g)), 2)
+    wick = np.round(np.abs(rng.normal(0.0, 0.3, (2, len(g)))), 2)
+    gap_high = np.round(np.maximum(gap_open, g.close) + wick[0], 2)
+    gap_low = np.round(np.minimum(gap_open, g.close) - wick[1], 2)
+    write_tradingview_csv(
+        TradingViewExport(
+            bars=Bars(g.ts, gap_open, gap_high, gap_low, g.close, g.volume, timeframe="60"),
+            columns={},
+            header=("time", "open", "high", "low", "close", "Volume"),
+            time_format="unix",
+        ),
+        OUT / "random_walk_gaps_60.csv",
+    )
+
     daily = random_walk_bars(n=60, seed=7, timeframe="1D", start=1_767_243_600, step=86_400)
     # 2026-01-01 00:00 America/New_York; 60 days stays clear of the March DST change.
     exp_iso = TradingViewExport(

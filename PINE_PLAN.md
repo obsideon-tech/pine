@@ -164,7 +164,22 @@ Let `w` be the first non-`na` bar of the correct output (`length − 1` for SMA/
 | one-bar look-ahead (`py[t] = ref[t+1]`) | bar `w − 1`, na-mask (shows up as early output, not "first bar") | ✅ |
 | `na` → 0 substitution on an input gap | the gap bar, na-mask | ✅ |
 | first bar dropped | bar `w`, na-mask | ✅ |
-| `stdev` sample ↔ population | bar `w`, value | pending `ta.stdev` |
+| `stdev` sample instead of population | bar `w`, value | ✅ |
+| stdev, highest, lowest: length ± 1, look-ahead, `na` → 0, first bar dropped | as for SMA | ✅ |
+| ATR: true range = `high − low` (gap terms ignored) | bar `w`, value — **only on gapped data** | ✅ |
+| ATR: first-bar true range `na` (`ta.tr` default instead of `high − low`) | bar `w`, na-mask | ✅ |
+| ATR: `na` close → 0 | gap bar **+ 1**, na-mask (true range uses `close[1]`) | ✅ |
+| ATR: length ± 1, look-ahead, first bar dropped | as for SMA | ✅ |
+| crossover: previous-bar condition dropped; one-bar look-ahead; crossunder swapped in | first differing bar, via `compare_discrete` | ✅ |
+
+46 numeric cases plus the discrete ones; every predicted bar matched on the first run.
+
+Fixture coverage matters as much as the harness: on the gapless random walk every open
+equals the previous close, so the true-range gap terms never dominate and the "`high − low`
+only" ATR bug **passes**. A test records this, and ATR uses a gapped fixture
+(`random_walk_gaps_60`, gap term dominant on 114 of 300 bars). Rule: a fixture must
+exercise every term of the formula under test, and §7.1 manifests should say which terms a
+fixture covers.
 
 Negative controls (must **not** be flagged): SMA via cumulative sums and EMA rearranged as
 `prev + α(x − prev)` both pass, with max error < 1e-10 on the fixture. A further test
@@ -187,6 +202,20 @@ export-derived value in the test docstring:
 - `ta.sma` summation: implemented newest-first with each term divided by `length`, per the
   recalled manual code; the built-in may sum differently (§5.6). Effect is < 1e-10 on the
   fixture, so not material at the default tolerances;
+- `ta.stdev`: population by default; deviations with `|d| ≤ 1e-10` zeroed as in the manual's
+  `SUM` helper. The recalled helper also returns the literal `15` for `1e-10 < |d| ≤ 1e-4`,
+  which reads as a documentation bug and is **not** ported — if the built-in really does
+  that, an export will show it;
+- `ta.atr`: first-bar true range `high − low`; the manual's `na(high[1])` test means a `na`
+  close makes the *next* true range `na`, not `high − low`. `ta.tr` without `handle_na`
+  returns `na` on the first bar **(unverified)**;
+- `ta.crossover`/`crossunder`: comparisons with `na` are false, so output is never `na`
+  (v6 semantics; v5 may differ);
+- **possible systematic difference:** recent manual pages may say that `na` values in
+  `source` are *ignored*, with the window extending back over `length` non-`na` values. If
+  so, the propagate-`na` behaviour used here for `sma`, `ema`, `rma`, `stdev`, `highest` and
+  `lowest` is wrong at gaps (it is unaffected on gap-free data). Settle with an export of a
+  series containing `na` before any consumer relies on behaviour at gaps;
 - `ta.rsi` zero branches: `down == 0 → 100` checked before `up == 0 → 0`, so a flat series
   gives 100 **(unverified)**;
 - `ta.stdev`'s `biased` default (believed `true`, i.e. population) **(unverified)**;
@@ -326,6 +355,9 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         near-tie excusal, Markdown report, `check_export`), mutation suite (§5.9) in CI.
         Built-ins meet oracles (a) and (b) only; (c) awaits a real export, so none is
         "verified" under §5.8 yet. HTML report deferred; Markdown only.
+      - _Progress 2026-11-03:_ **`stdev`, `highest`, `lowest`, `tr`, `atr`, `crossover`,
+        `crossunder` added**, completing the §7.5 core list; same oracle status. Mutation suite
+        extended (46 numeric cases + discrete), gapped fixture added for ATR. Next: P3 lint.
       - _Raised:_ 2026-11-03
       - _Why:_ the credit expires 2026-11-05.
       - _Done when:_ CI green and `pytest` collecting tests for `ta`, `parity` (incl. mutation
@@ -345,12 +377,14 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
 - [x] **[med] Mutation suite as P2's exit criterion** (§5.9) — done 2026-11-03 except the
       `stdev` case, which waits for `ta.stdev`.
 - [x] **[med] Fixture manifest schema and validator in P0** (§7.1) — done 2026-11-03.
-- [ ] **[high] Commit TradingView reference values for `sma`, `ema`, `rma`, `rsi`**
+- [ ] **[high] Commit TradingView reference values for the core built-ins**
       - _Raised:_ 2026-11-03
       - _Why:_ the two-oracle rule (§5.8) needs oracle (c); without it the ports are checked
         only against their own reading of the manual, which shares any misremembering.
-      - _Done when:_ one export (or numbers-only values, per the terms item) for each, with a
-        manifest, passing `check_export` in aligned mode.
+      - _Done when:_ one export (or numbers-only values, per the terms item) covering `sma`,
+        `ema`, `rsi` (covers `rma`), `stdev`, `highest`, `lowest`, `atr` and `crossover` on a
+        symbol with opening gaps, plus one series containing `na` (settles the §5.10
+        `na`-window question), each with a manifest, passing `check_export` in aligned mode.
 - [ ] **[med] Offset-aware `lookahead_on` rule** (§6.2)
       - _Raised:_ 2026-11-03
       - _Why:_ the naive rule flags the standard safe idiom.
