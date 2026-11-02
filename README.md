@@ -27,10 +27,13 @@ exp.observed_decimals  # printed precision per column (sets the tolerance floor)
 from pine import ta
 from pine.parity import PortSpec, check_export
 
-report = check_export(exp, {
-    "RSI": PortSpec(fn=lambda b: ta.rsi(b.close, 14), kind="bounded"),
-})
-print(report.to_markdown())   # na-mask mismatches, first divergent bar, error metrics
+report = check_export(
+    exp,
+    {
+        "RSI": PortSpec(fn=lambda b: ta.rsi(b.close, 14), kind="bounded"),
+    },
+)
+print(report.to_markdown())  # na-mask mismatches, first divergent bar, error metrics
 ```
 
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
