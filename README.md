@@ -3,7 +3,8 @@ Port TradingView indicators, with a check that the Python output matches Pine ba
 
 **Status:** pre-alpha. Done: bar schema, TradingView CSV loader, fixture manifests, parity
 harness with mutation suite, and `ta.sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`,
-`tr`, `atr`, `crossover`, `crossunder`. These pass closed-form and property tests but have **not yet been checked against TradingView
+`tr`, `atr`, `crossover`, `crossunder`, and the `pine-lint` repainting check. The built-ins
+pass closed-form and property tests but have **not yet been checked against TradingView
 output**; do not rely on them until they have. See [`PINE_PLAN.md`](PINE_PLAN.md).
 
 ```bash
@@ -35,6 +36,20 @@ report = check_export(
 )
 print(report.to_markdown())  # na-mask mismatches, first divergent bar, error metrics
 ```
+
+Static repainting check:
+
+```bash
+uv run pine-lint script.pine
+```
+
+```bash
+uv run pine-lint script.pine --strict --format json
+```
+
+Each finding says whether the problem is established (`definite`) or whether safety could not
+be proven (`possible`). Rules and their known blind spots are in
+[`PINE_PLAN.md` §6](PINE_PLAN.md#6-lint-soundness).
 
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
 manifest describing how it was produced; see `src/pine/manifest.py`.

@@ -1,0 +1,7 @@
+//@version=6
+indicator("history and display positives", overlay = true)
+peek = close[-1]  // expect: negative-history-index
+ph = ta.pivothigh(high, 5, 5)
+plot(ph, "pivot", offset = -5)  // expect: negative-plot-offset
+plotshape(ph, offset = -5)  // expect: negative-plot-offset
+plot(peek)

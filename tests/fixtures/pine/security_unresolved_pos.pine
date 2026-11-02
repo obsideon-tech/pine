@@ -1,0 +1,6 @@
+//@version=6
+indicator("unresolved lookahead")
+useLa = input.bool(false, "lookahead")
+la = useLa ? barmerge.lookahead_on : barmerge.lookahead_off
+a = request.security(syminfo.tickerid, "D", close[1], lookahead = la)  // expect: security-lookahead-unresolved
+plot(a)

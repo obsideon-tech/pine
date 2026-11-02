@@ -1,0 +1,7 @@
+//@version=6
+strategy("declaration positives",
+     calc_on_every_tick = true,  // expect: calc-on-every-tick
+     calc_on_order_fills = true,  // expect: fill-timing
+     process_orders_on_close = true)  // expect: fill-timing
+if ta.crossover(close, ta.sma(close, 10))
+    strategy.entry("L", strategy.long)

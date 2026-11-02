@@ -1,0 +1,9 @@
+//@version=6
+indicator("realtime state positives")
+varip int ticks = 0  // expect: varip
+ticks += 1
+live = barstate.isrealtime  // expect: barstate-realtime
+first = barstate.isnew ? 1 : 0  // expect: barstate-realtime
+last = barstate.islast  // expect: barstate-realtime
+age = timenow - time  // expect: timenow
+plot(ticks + first + age)

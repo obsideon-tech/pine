@@ -1,0 +1,9 @@
+//@version=6
+indicator("history and display negatives", overlay = true)
+prev = close[1]
+x = 10
+[m, s, h] = ta.macd(close, 12, 26, 9)
+y = x - 1
+ph = ta.pivothigh(high, 5, 5)
+plot(ph, "pivot", offset = 5)
+plot(prev + y + m)

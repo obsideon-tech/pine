@@ -1,0 +1,31 @@
+//@version=6
+// A representative clean script: no finding is expected anywhere in this file.
+indicator("Clean RSI + EMA", overlay = false)
+
+len = input.int(14, "RSI length")
+fast = input.int(9, "Fast EMA")
+slow = input.int(21, "Slow EMA")
+htf = input.timeframe("D", "Higher timeframe")
+
+r = ta.rsi(close, len)
+emaFast = ta.ema(close, fast)
+emaSlow = ta.ema(close, slow)
+
+// Non-repainting higher-timeframe idiom: offset by one bar, lookahead on.
+htfClose = request.security(syminfo.tickerid, htf, close[1], lookahead = barmerge.lookahead_on)
+htfRsi = request.security(syminfo.tickerid, htf, ta.rsi(close, len)[1], lookahead = barmerge.lookahead_on)
+htfSma = request.security(syminfo.tickerid, htf, ta.sma(close[1], len), lookahead = barmerge.lookahead_on)
+sameTf = request.security(syminfo.tickerid, timeframe.period, close)
+
+// Strings and comments that mention risky things must not trigger rules:
+// request.security(syminfo.tickerid, "D", close, lookahead = barmerge.lookahead_on) varip timenow
+note = "varip timenow barstate.isrealtime close[-1]"
+
+longSignal = ta.crossover(emaFast, emaSlow) and r < 70
+plot(r, "RSI", color = #2962FF)
+plot(htfClose, "HTF close", color = color.gray)
+hline(70)
+hline(30)
+
+if longSignal
+    alert("Fast EMA crossed above slow EMA", freq = alert.freq_once_per_bar_close)

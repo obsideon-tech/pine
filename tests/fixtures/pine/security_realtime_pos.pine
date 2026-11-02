@@ -1,0 +1,7 @@
+//@version=6
+indicator("HTF realtime repaint")
+a = request.security(syminfo.tickerid, "D", close)  // expect: security-realtime-repaint
+b = request.security(syminfo.tickerid, "240", ta.rsi(close, 14), lookahead = barmerge.lookahead_off)  // expect: security-realtime-repaint
+tf = input.timeframe("W")
+c = request.security(syminfo.tickerid, tf, high)  // expect: security-realtime-repaint
+plot(a + b + c)

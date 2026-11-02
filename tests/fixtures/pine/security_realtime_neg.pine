@@ -1,0 +1,6 @@
+//@version=6
+indicator("HTF realtime negatives")
+a = request.security(syminfo.tickerid, timeframe.period, close)
+b = request.security(syminfo.tickerid, "", close)
+c = request.security(syminfo.tickerid, "D", close[1])
+plot(a + b + c)

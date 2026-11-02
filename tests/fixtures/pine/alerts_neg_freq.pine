@@ -1,0 +1,6 @@
+//@version=6
+indicator("alert negatives via freq")
+cross = ta.crossover(close, ta.sma(close, 20))
+if cross
+    alert("crossed", alert.freq_once_per_bar_close)
+    alert("crossed", freq = alert.freq_once_per_bar_close)

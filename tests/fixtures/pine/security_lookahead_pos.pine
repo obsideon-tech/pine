@@ -1,0 +1,16 @@
+//@version=6
+indicator("lookahead positives")
+a = request.security(syminfo.tickerid, "D", close, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+b = request.security(syminfo.tickerid, "D", high[0], lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+c = request.security(syminfo.tickerid, "D", close, barmerge.gaps_off, barmerge.lookahead_on)  // expect: security-lookahead-leak
+src = close
+d = request.security(syminfo.tickerid, "D", src, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+e = request.security(syminfo.tickerid, "D", ta.sma(close, 20), lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+f = request.security(syminfo.tickerid, "D", close[1] + src, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+// A call split over several lines is reported at the call's first line.
+g = request.security(  // expect: security-lookahead-leak
+     syminfo.tickerid,
+     "W",
+     hl2,
+     lookahead = barmerge.lookahead_on)
+plot(a + b + c + d + e + f + g)

@@ -1,0 +1,9 @@
+//@version=6
+indicator("realtime state negatives")
+var int bars = 0
+bars += 1
+confirmed = barstate.isconfirmed
+t = time
+myvaripish = 1
+timenowish = 2
+plot(bars + t + myvaripish + timenowish)

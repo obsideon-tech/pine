@@ -216,6 +216,11 @@ export-derived value in the test docstring:
   so, the propagate-`na` behaviour used here for `sma`, `ema`, `rma`, `stdev`, `highest` and
   `lowest` is wrong at gaps (it is unaffected on gap-free data). Settle with an export of a
   series containing `na` before any consumer relies on behaviour at gaps;
+- facts the lint rules rest on **(unverified)**: `lookahead` is the 5th positional parameter
+  of `request.security` (after symbol, timeframe, expression, gaps); `alert()`'s default
+  `freq` is `alert.freq_once_per_bar` (fires intrabar); a negative literal history index
+  does not compile; `barstate.isnew`/`islast` differ between history and realtime as
+  described;
 - `ta.rsi` zero branches: `down == 0 → 100` checked before `up == 0 → 0`, so a flat series
   gives 100 **(unverified)**;
 - `ta.stdev`'s `biased` default (believed `true`, i.e. population) **(unverified)**;
@@ -244,12 +249,62 @@ one bar. Also flag a higher-timeframe `request.security` **without** `lookahead_
 an offset, because its value changes on realtime bars until the higher-timeframe bar closes.
 The two cases get different messages: future leak in history versus realtime repaint.
 
-### 6.3 Candidate rules (each with positive and negative fixture)
+### 6.3 Implemented rules (P3, 2026-11-03)
 
-`timenow` used in logic; alert conditions not gated by `barstate.isconfirmed`;
-`request.security_lower_tf`; strategy `calc_on_order_fills` / `process_orders_on_close`
-(fill-timing optimism rather than repainting, reported as a separate category); pivots
-plotted with negative `offset` (visually misleading, not repainting — informational).
+`pine.lint` tokenizes the source (comments and strings handled, calls split into
+positional/named arguments across lines) and applies rules to tokens and calls; it is not a
+parser. Every finding has a **category**, a **severity** and a **confidence**: `definite`
+means the defect is established, `possible` means safety could not be proven. "Could not
+prove safe" is never reported as "proven unsafe".
+
+| id | category | severity / confidence | Fires on |
+|---|---|---|---|
+| `security-lookahead-leak` | future-leak | error/definite when a built-in series is read unoffset (`close`, `close[0]`, `ta.sma(close, 20)`); warning/possible when the offset cannot be proven | `request.security`/`security` with `lookahead_on` (named or 5th positional) |
+| `security-lookahead-unresolved` | future-leak | warning/possible | lookahead given by a variable or expression |
+| `security-realtime-repaint` | realtime-repaint | warning/possible | lookahead off, no provable offset, timeframe not `timeframe.period`/`""` |
+| `security-lower-tf` | realtime-repaint | info/possible | `request.security_lower_tf` |
+| `calc-on-every-tick` | realtime-repaint | warning/definite | `calc_on_every_tick = true` |
+| `varip` | realtime-repaint | warning/definite | any `varip` |
+| `barstate-realtime` | realtime-repaint | warning/possible | `barstate.isrealtime`, `.isnew`, `.islast` |
+| `timenow` | realtime-repaint | warning/possible | `timenow` |
+| `alert-unconfirmed` | realtime-repaint | warning/possible | `alert()` without `freq = alert.freq_once_per_bar_close`, in a script with no `barstate.isconfirmed` |
+| `alertcondition-unconfirmed` | realtime-repaint | info/possible | `alertcondition()` in a script with no `barstate.isconfirmed` |
+| `fill-timing` | fill-timing | info/definite | `calc_on_order_fills = true`, `process_orders_on_close = true` |
+| `negative-history-index` | future-leak | error/definite | `x[-n]`, literal `n` |
+| `negative-plot-offset` | display | info/definite | `plot*`/`bgcolor` with literal `offset = -n` |
+| `unsupported-version` | meta | info/definite | `//@version` missing or < 5 |
+
+**Offset proof (§6.2).** An expression is *proven* offset when its outermost form is
+`atom[k]`, `(expr)[k]` or `f(...)[k]` with literal `k ≥ 1`, or every built-in price/time
+series in it carries `[k ≥ 1]` and no user identifier appears outside a second-or-later call
+argument. It is a *definite leak* when a built-in series is read unoffset outside any
+bare-name call. Everything else is *unproven*. Known error sources:
+
+- **False negative:** a user series passed as a second-or-later call argument
+  (`math.max(close[1], mySeries)`) is assumed to be a parameter such as a length.
+- **False negative:** `alert-unconfirmed` accepts any reference to `barstate.isconfirmed` in
+  the script as a gate, whether or not it gates that alert.
+- **Conservative ("possible"):** user variables are not traced (`src = close` then
+  `request.security(..., src, lookahead_on)`); bare-name calls (`nz(close)`, user functions)
+  may offset internally.
+- **Conservative:** the timeframe argument is not evaluated, so a variable timeframe that is
+  in fact the chart's is still reported by `security-realtime-repaint`.
+
+**Testing.** Fixtures in `tests/fixtures/pine/` carry their expectations inline
+(`// expect: rule-id` on the offending line); the test requires the set of
+`(rule, line)` findings to equal the annotated set exactly, so misses, false positives and
+wrong line numbers all fail. Every rule has a positive fixture; `*_neg.pine` files and
+`clean_indicator.pine` (zero findings, including risky words inside strings and comments)
+are the negatives. An **injection test**, the lint analogue of the mutation suite, inserts
+each rule's pattern into the clean script and requires exactly that rule at that line.
+Suppression: `// pine-lint: ignore[rule-id]` on the line; suppressed findings are reported.
+
+CLI: `pine-lint FILE... [--format text|json] [--strict]`; exit 1 on errors (or warnings
+with `--strict`), 2 on read/tokenize errors.
+
+**Deferred:** `fill_orders_on_standard_ohlc` (default unverified; the rule would fire on
+nearly every strategy); tracing user variables into `request.security`; evaluating
+timeframe arguments against the chart's.
 
 ### 6.4 Dynamic check (later, optional)
 
@@ -357,7 +412,10 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         "verified" under §5.8 yet. HTML report deferred; Markdown only.
       - _Progress 2026-11-03:_ **`stdev`, `highest`, `lowest`, `tr`, `atr`, `crossover`,
         `crossunder` added**, completing the §7.5 core list; same oracle status. Mutation suite
-        extended (46 numeric cases + discrete), gapped fixture added for ATR. Next: P3 lint.
+        extended (46 numeric cases + discrete), gapped fixture added for ATR.
+      - _Progress 2026-11-03:_ **P3 built** — `pine.lint` with the 14 rules of §6.3, `pine-lint`
+        CLI, annotated fixtures, injection test. P3's exit criterion is met. Remaining for this
+        item: CI green on the pushed commit (checked per push).
       - _Raised:_ 2026-11-03
       - _Why:_ the credit expires 2026-11-05.
       - _Done when:_ CI green and `pytest` collecting tests for `ta`, `parity` (incl. mutation
@@ -385,10 +443,8 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         `ema`, `rsi` (covers `rma`), `stdev`, `highest`, `lowest`, `atr` and `crossover` on a
         symbol with opening gaps, plus one series containing `na` (settles the §5.10
         `na`-window question), each with a manifest, passing `check_export` in aligned mode.
-- [ ] **[med] Offset-aware `lookahead_on` rule** (§6.2)
-      - _Raised:_ 2026-11-03
-      - _Why:_ the naive rule flags the standard safe idiom.
-      - _Done when:_ the safe idiom is a passing negative fixture.
+- [x] **[med] Offset-aware `lookahead_on` rule** (§6.2) — done 2026-11-03; the `close[1]`
+      idiom and four variants are negative fixtures.
 - [x] **[low] PyPI name check and trademark disclaimer** (§7.4, §8) — `pine-parity`;
       disclaimer in README. Name not yet *reserved* on PyPI (needs the owner's account).
       - _Raised:_ 2026-11-03
