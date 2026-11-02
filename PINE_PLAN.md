@@ -1,8 +1,10 @@
-# pine: public Pine Script → Python toolkit (preliminary plan)
+# pine: public Pine Script → Python toolkit (plan)
 
-Status: preliminary plan, 2026-11-03. Nothing is built. `pine` is a **public** repository
-(GitHub). Revised the same day with an analytical framework (§5), lint soundness (§6) and
-data/operations rules (§7).
+Status, 2026-11-03: **P0, P2 and P3 built**; P1 built for the core subset (§7.5); P4 not
+started. **No built-in is verified against TradingView output yet** (§5.8): every check so
+far is self-referential (§8, §10). `pine` is a **public** repository (GitHub). Sections:
+parity spec (§5), lint (§6), data and operations (§7), risks (§8), checklist (§9), second
+review and next steps (§10).
 
 ## 1. What it is
 
@@ -47,16 +49,16 @@ documented here.
 
 ## 4. Phases
 
-| Phase | Delivers | Done when |
-|---|---|---|
-| P0 | Repo, licence, CI, `Bars` schema (ts, OHLCV, timeframe, session tz), TradingView CSV loader, fixture manifest schema + validator (§7.1) | loader round-trips a TradingView export fixture; every fixture has a valid manifest; CI green |
-| P1 | `pine.ta`: core built-ins with Pine semantics (see §7.5 for scope) | every built-in meets the two-oracle rule (§5.8), incl. warm-up `na` count |
-| P2 | `pine.parity`: tolerance report (§5.1–5.7), first divergent bar, warm-up/convergence modes, HTML/MD report | every mutation in the suite (§5.9) is detected at its expected bar |
-| P3 | `pine.lint`: repainting rules with line numbers (§6) | each rule has a positive and negative fixture, incl. the safe `lookahead_on` idiom as a negative; zero findings on a known-clean script |
-| P4 (optional) | transpiler for a declared Pine v5/v6 subset (series, `var`, `[]`, `if`, `for`, `ta.*`, `math.*`) | transpiled output passes `pine.parity` on 10 public indicators |
+| Phase | Delivers | Done when | Status (2026-11-03) |
+|---|---|---|---|
+| P0 | Repo, licence, CI, `Bars` schema (ts, OHLCV, timeframe, session tz), TradingView CSV loader, fixture manifest schema + validator (§7.1) | loader round-trips a TradingView export fixture; every fixture has a valid manifest; CI green | done on synthetic fixtures; layout unchecked against a real export |
+| P1 | `pine.ta`: core built-ins with Pine semantics (see §7.5 for scope) | every built-in meets the two-oracle rule (§5.8), incl. warm-up `na` count | core subset built; oracles (a)+(b) only, (c) missing → **not done** |
+| P2 | `pine.parity`: tolerance report (§5.1–5.7), first divergent bar, warm-up/convergence modes, HTML/MD report | every mutation in the suite (§5.9) is detected at its expected bar | done; Markdown report only (HTML deferred) |
+| P3 | `pine.lint`: repainting rules with line numbers (§6) | each rule has a positive and negative fixture, incl. the safe `lookahead_on` idiom as a negative; zero findings on a known-clean script | done; precision/recall on real scripts unmeasured (§10 C3) |
+| P4 (optional) | transpiler for a declared Pine v5/v6 subset (series, `var`, `[]`, `if`, `for`, `ta.*`, `math.*`) | transpiled output passes `pine.parity` on 10 public indicators | not started |
 
-P0–P3 in one cloud session before the credit expires on **2026-11-05** is optimistic; §7.5
-gives the cut order. P4 does not fit.
+P0–P3 were completed inside the cloud credit window (deadline 2026-11-05) by following the
+§7.5 cut order. P4 is not scheduled; §10 ranks the work that should come first.
 
 ## 5. Analytical framework (parity spec)
 
@@ -366,8 +368,17 @@ not an asset. Cut order if time runs short, keeping from the top:
 4. P3 lint with the corrected `lookahead_on` rule and the existing rules.
 5. Remaining built-ins and §6.3 candidate rules — defer.
 
+Outcome: items 1–4 were completed on 2026-11-03; item 5 stays deferred behind §10.
+
 ## 8. Risks and open questions
 
+- **Self-referential evidence (largest risk).** The ports, the closed-form oracles, the
+  property tests and the mutants all derive from one recalled reading of the Pine manual. A
+  coherent misreading (e.g. the `na`-window rule, §5.10) would pass every test in the suite.
+  Only oracle (c), TradingView output, breaks the circle (§10 A1).
+- **Tolerances ignore rounded inputs.** If an export rounds OHLC, the port computes on
+  rounded prices; the resulting output error is not covered by the output-rounding floor of
+  §5.1 and is unbounded for RSI near `up + down → 0` (§10 A3).
 - **Exact Pine semantics come from recall unless checked.** See §5.10. Nothing in that list is
   frozen in a test without a citation or an export-derived value.
 - **Export precision unknown.** If exports are rounded to display precision, `atol` must be
@@ -435,14 +446,66 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
 - [x] **[med] Mutation suite as P2's exit criterion** (§5.9) — done 2026-11-03 except the
       `stdev` case, which waits for `ta.stdev`.
 - [x] **[med] Fixture manifest schema and validator in P0** (§7.1) — done 2026-11-03.
-- [ ] **[high] Commit TradingView reference values for the core built-ins**
+- [ ] **[high] A1 — Reference values for the core built-ins via a capture script and a
+      coverage matrix** (§10 A1; supersedes the earlier "commit reference values" item)
       - _Raised:_ 2026-11-03
       - _Why:_ the two-oracle rule (§5.8) needs oracle (c); without it the ports are checked
         only against their own reading of the manual, which shares any misremembering.
-      - _Done when:_ one export (or numbers-only values, per the terms item) covering `sma`,
-        `ema`, `rsi` (covers `rma`), `stdev`, `highest`, `lowest`, `atr` and `crossover` on a
-        symbol with opening gaps, plus one series containing `na` (settles the §5.10
-        `na`-window question), each with a manifest, passing `check_export` in aligned mode.
+      - _Done when:_ `tools/reference_capture.pine` exists, and every core built-in passes
+        `check_export` in aligned mode on every row of the §10 A1 matrix, each export with a
+        manifest (numbers only or kept local, per the terms item).
+- [ ] **[high] A2 — `na_policy` switch and the opposite-policy mutant** (§10 A2)
+      - _Raised:_ 2026-11-03
+      - _Why:_ the `na`-window rule is the single most consequential unverified semantic.
+      - _Done when:_ both policies implemented, the mutant is detected, and an export with `na`
+        selects one; the switch is then removed.
+- [ ] **[high] A3 — Input-rounding-aware tolerances** (§10 A3)
+      - _Raised:_ 2026-11-03
+      - _Why:_ rounded OHLC in an export produces output error the current floor ignores.
+      - _Done when:_ `propagated_tolerance` with the §10 A3 bounds, each bound tested by ±δ
+        input perturbation, and `check_export` uses it when the input decimals are known.
+- [ ] **[high] A4 — Minimum detectable error in reports** (§10 A4)
+      - _Raised:_ 2026-11-03
+      - _Why:_ a pass without a sensitivity statement overstates what was shown.
+      - _Done when:_ each `ColumnReport` states its seed-error detection threshold, and a
+        magnitude sweep in the mutation suite confirms it.
+- [ ] **[high] B1 — Two-bar crossover excuse** (§10 B1)
+      - _Raised:_ 2026-11-03
+      - _Why:_ `near_tie` is per bar; a crossover depends on bars t and t−1, so legitimate flips
+        caused by a tie at t−1 currently fail.
+      - _Done when:_ `crossover_excuse` exists and a test with a tie at t−1 passes only with it.
+- [ ] **[med] B2 — Discrete columns in `check_export`; JSON parity report** (§10 B2)
+      - _Raised:_ 2026-11-03
+      - _Why:_ exported signal columns cannot be checked today; consumers' CI needs JSON.
+      - _Done when:_ `PortSpec(kind="discrete")` routes to `compare_discrete`;
+        `ParityReport.to_dict()` exists.
+- [ ] **[med] B3 — Composite convergence bounds for RSI and ATR** (§10 B3)
+      - _Raised:_ 2026-11-03
+      - _Why:_ `convergence_bars` covers one filter; RSI/ATR compose filters with windows.
+      - _Done when:_ documented bound plus a test like the §5.3 hazard test for RSI.
+- [ ] **[med] C1 — Lint: single-assignment tracing** (§10 C1)
+      - _Raised:_ 2026-11-03
+      - _Why:_ untraced variables are the largest source of `possible` findings.
+      - _Done when:_ `src = close` then `request.security(..., src, lookahead_on)` is
+        `definite`; reassigned variables stay `possible`.
+- [ ] **[med] C2 — Lint: block-aware alert gating** (§10 C2)
+      - _Raised:_ 2026-11-03
+      - _Why:_ closes the documented false negative in `alert-unconfirmed`.
+      - _Done when:_ an `alert()` outside an `isconfirmed`-gated block is reported even when
+        `barstate.isconfirmed` appears elsewhere.
+- [ ] **[med] C3 — Lint precision/recall on a local corpus** (§10 C3)
+      - _Raised:_ 2026-11-03
+      - _Why:_ rule quality on real scripts is unknown.
+      - _Done when:_ results recorded in §6.3 (counts only, no script content); `definite`
+        precision is 100% or the offending rule is fixed.
+- [ ] **[low] D1 — v0.1.0 release and CHANGELOG** (§10 D1)
+      - _Raised:_ 2026-11-03
+      - _Why:_ consumers need a pinned, documented version (§7.2).
+      - _Done when:_ tag on `main` after the history decision; CHANGELOG lists the API.
+- [ ] **[low] D2 — Deterministic CI profile, weekly random run, coverage floor** (§10 D2)
+      - _Raised:_ 2026-11-03
+      - _Why:_ property tests are currently random per run; coverage is unmeasured.
+      - _Done when:_ CI derandomized; scheduled job with random seeds; `--cov` with a floor.
 - [x] **[med] Offset-aware `lookahead_on` rule** (§6.2) — done 2026-11-03; the `close[1]`
       idiom and four variants are negative fixtures.
 - [x] **[low] PyPI name check and trademark disclaimer** (§7.4, §8) — `pine-parity`;
@@ -450,3 +513,128 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Raised:_ 2026-11-03
       - _Why:_ a name collision or trademark complaint after release is costlier than before.
       - _Done when:_ distribution name chosen; README disclaimer present.
+
+## 10. Review 2 (2026-11-03): next steps
+
+Objective assessment after P0, P2 and P3. What is strong: na-mask-first comparison, aligned
+mode as the default, the mutation suite with exact expected bars and negative controls,
+fixture-annotated lint tests with an injection test, and explicit `definite`/`possible`
+confidence. What is weak: **all evidence is internal**. The recommendations below are ranked
+by how much each reduces the chance of certifying a wrong port. Each has a checklist item in
+§9 with a done-when.
+
+### A. Evidence
+
+**A1. Reference capture script and coverage matrix.** Write `tools/reference_capture.pine`, a
+self-written, public-safe indicator that plots every core built-in with fixed inputs
+(`sma/ema/rma/rsi/stdev(14)`, `highest/lowest(20)`, `atr(14)`, `crossover(ema 9, ema 21)` as
+0/1), so oracle (c) needs one export per row rather than hand assembly. Required matrix before
+any built-in is called "verified":
+
+| Row | Purpose |
+|---|---|
+| price < 1 (e.g. an FX cross or low-priced asset) | `rtol` vs `atol` regime, many decimals |
+| price ≈ 100 | baseline |
+| price > 10 000 | `rtol` dominates; float64 headroom |
+| symbol with opening gaps | true-range gap terms (§5.9 coverage note) |
+| series with `na` (e.g. an indicator of a sparse series) | settles the `na`-window rule (A2) |
+| ≥ 5 000 bars | convergence and summation drift (§5.6) |
+| daily bars across a DST change | session/timestamp convention (§7.1) |
+
+Tradeoff: one capture script is fast but couples every built-in to one chart setup; the matrix
+rows compensate. Export terms are still open, so commit numbers only or keep files local.
+
+**A2. Settle the `na`-window rule empirically.** Until an export decides, give the window
+functions an `na_policy` (`"propagate"` as now, `"skip"` = extend the window back over `length`
+non-`na` values), and add the other policy as a mutant so the harness is shown to separate
+them. Remove the switch once settled. Tradeoff: temporary API surface; the alternative
+(guessing) risks a systematic error that every current test would miss.
+
+**A3. Tolerances that account for rounded inputs.** If the export rounds inputs to `δ_in` and
+outputs to `δ_out`, the port's legitimate error is bounded by `L·δ_in + δ_out`, where `L` is
+the indicator's sup-norm sensitivity to its inputs:
+
+| Indicator | Bound on `L` | Reason |
+|---|---|---|
+| SMA, EMA, RMA | 1 | convex combination of inputs (weights sum to 1) |
+| highest, lowest | 1 | order statistics are 1-Lipschitz |
+| stdev (population) | 1 | `σ = ‖P x‖/√n` with `P` the centring projection, `‖P‖ ≤ 1`; sample: `√(n/(n−1))` |
+| ATR | 2 | each true-range term is a difference of two inputs; `max` and RMA are 1-Lipschitz |
+| RSI | per bar, ≈ `200 / (up + down)` | `RSI = 100·U/(U+D)`; first-order sensitivity to `U, D` each perturbed by ≤ `2δ_in` |
+
+RSI has no global bound: when `up + down` is small (flat markets) a one-tick rounding can move
+RSI by many points, so its tolerance must be computed per bar. Implement
+`propagated_tolerance(indicator, δ_in, δ_out)`; test each bound by perturbing inputs by ±δ and
+asserting the output change stays within it. Tradeoff: per-indicator code, but without it a
+rounded-input export would either fail correct ports or force a blanket tolerance loose enough
+to pass wrong ones.
+
+**A4. Minimum detectable error (MDE).** A pass should say what it could not see. For a
+recursive filter, a seed error `e₀` is detectable in aligned mode only if `e₀ > tol` at the
+seed bar, so the report states "seed errors below `tol(w)` are undetectable". In convergence
+mode, `e₀·(1−α)^exclude` must exceed `tol` — usually impossible by construction, which is
+the §5.3 hazard stated as a number. Extend the mutation suite with a magnitude sweep (seed
+error at 0.1×, 1×, 10× the tolerance) confirming the stated threshold. Tradeoff: reports get
+longer; the alternative is a pass that implies more than it shows.
+
+### B. Harness correctness
+
+**B1. Two-bar crossover excuse.** `near_tie` is evaluated per bar, but `crossover` at bar t
+depends on the comparisons at t and t−1. A legitimate flip caused by a tie at t−1 is
+currently not excused. Add `crossover_excuse(a, b, tol) = near_tie_t | near_tie_{t−1}` and
+use it in examples and tests.
+
+**B2. Discrete columns and machine-readable reports.** `PortSpec` accepts numeric kinds only,
+so an exported 0/1 signal column cannot be checked by `check_export`. Add `kind="discrete"`
+routed to `compare_discrete`, and `ParityReport.to_dict()`/JSON so downstream CI can gate on
+results without parsing Markdown. HTML stays deferred.
+
+**B3. Composite convergence.** `convergence_bars` covers a single filter. For RSI (two RMAs of
+a differenced series) and ATR (RMA of true range), the bound is the slowest internal filter's
+plus the window warm-up (+1 bar for differencing). Document and test it the way the §5.3
+hazard test does for EMA.
+
+### C. Lint quality
+
+**C1. Single-assignment tracing.** Resolve identifiers assigned once with `=` and never
+reassigned with `:=`, so `src = close` followed by `request.security(..., src, lookahead_on)`
+becomes `definite`. This removes the largest class of `possible` findings. Reassigned or
+conditionally assigned variables stay `possible`.
+
+**C2. Block-aware alert gating.** Use indentation to find the `if` enclosing each `alert()`
+and require `barstate.isconfirmed` in that condition (or `freq_once_per_bar_close`). This
+closes the documented false negative where any `isconfirmed` anywhere in the script counts.
+
+**C3. Measured precision and recall.** Run `pine-lint` over 30–50 open-source scripts kept
+locally (never committed; licences vary), hand-label a sample, and record counts in §6.3:
+target 100% precision for `definite` findings and a published rate of `possible` findings.
+Tradeoff: a few hours of labelling; without it the rule set's quality is asserted, not
+measured.
+
+### D. Operations
+
+**D1. Release.** After PR #1 merges and the history decision is made: CHANGELOG, tag
+`v0.1.0`, consumers pin the commit SHA (§7.2).
+
+**D2. CI.** A Hypothesis CI profile with `derandomize=True` so failures reproduce, plus a
+scheduled weekly job with random seeds to keep searching; `pytest --cov` with a floor;
+dependabot for the SHA-pinned actions. Tradeoff: deterministic CI finds fewer new
+counterexamples, hence the weekly random run.
+
+**D3. Performance, only when needed.** The reference loops are O(n·L) pure Python. Add
+vectorised fast paths only when a consumer needs more than ~10⁵ bars, each validated against
+the loop reference with the existing negative-control pattern (§5.9); the loops remain the
+oracle.
+
+**D4. Split the documents.** This file now mixes plan, normative specification and progress
+log. With D1, move §5–§6 to `docs/SPEC.md` (normative), progress notes to `CHANGELOG.md`, and
+keep this file to plan, risks and checklist.
+
+**D5. Owner-only actions.** Decide the history purge **before** merging PR #1; confirm
+GitHub secret scanning and push protection are enabled (not verified from here); confirm the
+TradingView export terms; reserve `pine-parity` on PyPI.
+
+### Suggested order
+
+A1 + A2 together (one export session settles both), then B1 and A3 (small, correctness
+critical), then A4 and B2, then C1–C2, then D1–D2 at merge time. C3, B3, D3 and D4 follow.

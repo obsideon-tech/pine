@@ -54,6 +54,19 @@ be proven (`possible`). Rules and their known blind spots are in
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
 manifest describing how it was produced; see `src/pine/manifest.py`.
 
+## Known gaps
+
+- **No external verification yet.** Every built-in is checked against closed-form cases and
+  property tests derived from the same reading of the Pine manual; none against TradingView
+  output. Treat results as unverified.
+- **`na` inside windows** may be handled differently by TradingView (skip vs propagate). Gap-free
+  data is unaffected.
+- **Tolerances** assume full-precision inputs; rounded OHLC in an export is not yet accounted for.
+- **Lint** does not trace user variables or resolve `if` blocks for alert gating; its precision
+  on real scripts is unmeasured. Parity reports are Markdown only.
+
+Ranked next steps: [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps).
+
 ## What "matches" will mean
 
 A port agrees with Pine when, on the same bars from the same first loaded bar: the pattern of
