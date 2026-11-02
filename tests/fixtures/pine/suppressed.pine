@@ -1,0 +1,5 @@
+//@version=6
+indicator("suppression")
+a = request.security(syminfo.tickerid, "D", close, lookahead = barmerge.lookahead_on)  // pine-lint: ignore[security-lookahead-leak]
+varip int n = 0  // pine-lint: ignore[timenow]  expect: varip
+plot(a + n)

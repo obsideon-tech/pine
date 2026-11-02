@@ -1,0 +1,4 @@
+//@version=6
+strategy("declaration negatives", calc_on_every_tick = false, calc_on_order_fills = false, process_orders_on_close = false)
+if ta.crossover(close, ta.sma(close, 10))
+    strategy.entry("L", strategy.long)

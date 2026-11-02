@@ -1,0 +1,3 @@
+//@version=4  // expect: unsupported-version
+study("old")
+plot(close)

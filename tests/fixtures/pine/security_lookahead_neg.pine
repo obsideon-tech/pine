@@ -1,0 +1,8 @@
+//@version=6
+indicator("lookahead negatives")
+a = request.security(syminfo.tickerid, "D", close[1], lookahead = barmerge.lookahead_on)
+b = request.security(syminfo.tickerid, "D", (high + low)[1], lookahead = barmerge.lookahead_on)
+c = request.security(syminfo.tickerid, "D", ta.ema(close, 20)[1], lookahead = barmerge.lookahead_on)
+d = request.security(syminfo.tickerid, "D", ta.sma(close[1], 20), lookahead = barmerge.lookahead_on)
+e = request.security(syminfo.tickerid, "D", close[2] - open[1], barmerge.gaps_off, barmerge.lookahead_on)
+plot(a + b + c + d + e)

@@ -1,0 +1,6 @@
+//@version=6
+indicator("alert negatives")
+cross = ta.crossover(close, ta.sma(close, 20))
+if cross and barstate.isconfirmed
+    alert("crossed")
+alertcondition(cross and barstate.isconfirmed, "Cross", "crossed")

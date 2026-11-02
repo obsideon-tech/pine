@@ -1,0 +1,15 @@
+source: synthetic
+symbol_class: synthetic
+timeframe: "60"
+session: regular
+timezone: UTC
+adjustment: none
+chart_type: candles
+pine_version: 6
+export_date: 2026-11-03
+timestamp_convention: bar_open
+displayed_precision: null
+indicator: null
+notes: >
+  Seeded random walk with opening gaps (open differs from the previous close), from
+  tools/make_synthetic.py. Needed to exercise true-range terms in ATR.

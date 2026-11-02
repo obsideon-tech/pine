@@ -1,7 +1,8 @@
 # pine: public Pine Script → Python toolkit (preliminary plan)
 
 Status: preliminary plan, 2026-11-03. Nothing is built. `pine` is a **public** repository
-(GitHub), separate from obsideon. Its private counterpart is `field` (`FIELD_PLAN.md`).
+(GitHub). Revised the same day with an analytical framework (§5), lint soundness (§6) and
+data/operations rules (§7).
 
 ## 1. What it is
 
@@ -25,54 +26,427 @@ conversion trustworthy, however it was produced (by hand, by an LLM, or by a tra
 
 - **Allowed in `pine`:** TradingView built-ins, well-known public indicators (RSI, MACD,
   Bollinger, Supertrend, Ichimoku), synthetic bars, and public data whose terms permit it.
-- **Never in `pine`:** anything from pineapple, `island/docs/pine/island_triggers.pine`,
-  `the_oscillator.pine`, pyramid's `scan_pine_signals.py`, tickers or settings used in
-  live strategies, broker or account details. Issues and commit messages follow the same rule.
-- **Direction is one-way.** obsideon uses `pine`; `pine` never imports or mentions obsideon.
+- **Never in `pine`:** proprietary indicators or strategy source, tickers or settings used in
+  live strategies, broker or account details, and the **names, paths or internal
+  identifiers of private consuming projects**. Issues, commit messages, fixtures, test names
+  and CI logs follow the same rule.
+- **Direction is one-way.** Private projects may depend on `pine`; `pine` never imports,
+  references or describes them.
 
-## 3. How obsideon uses it
+## 3. Downstream consumers (generic)
 
-It is the tool for two open items in `PIPELINE_ADDENDUM.md`:
+Consumers install `pine` at a pinned version (see §7.2) and use it for two things:
 
-| Item | Use |
+| Use | Tool |
 |---|---|
-| 74 — repainting review of every strategy that alerts strait | run `pine.lint` on each strategy and the indicators it calls; the verdict goes in the strategy's registration |
-| 75 — Pine parity references | for each indicator feeding a strategy that seeks graduation: Python reference in academy, parity test via `pine.parity` on exported TradingView bars |
+| Repainting review of a strategy and the indicators it calls, before it is allowed to alert | `pine.lint`; the verdict and the lint version are recorded by the consumer |
+| Reference ports of indicators a strategy depends on | Python port + parity test via `pine.parity` on exported TradingView bars |
 
-Installed from the Gitea mirror at a pinned tag (`uv` git source), as for any dependency.
+How a consumer records or gates on these results is the consumer's business and is not
+documented here.
 
 ## 4. Phases
 
 | Phase | Delivers | Done when |
 |---|---|---|
-| P0 | Repo, licence, CI, `Bars` schema (ts, OHLCV, timeframe, session tz), TradingView CSV loader | loader round-trips a TradingView export fixture; CI green |
-| P1 | `pine.ta`: ~25 most-used built-ins with Pine semantics | every built-in has a test against a documented Pine reference value, incl. warm-up `na` count |
-| P2 | `pine.parity`: tolerance report, first divergent bar, warm-up handling, HTML/MD report | a deliberately wrong port (seed changed) is caught at the right bar |
-| P3 | `pine.lint`: repainting rules with line numbers | each rule has a positive and negative fixture; zero findings on a known-clean script |
+| P0 | Repo, licence, CI, `Bars` schema (ts, OHLCV, timeframe, session tz), TradingView CSV loader, fixture manifest schema + validator (§7.1) | loader round-trips a TradingView export fixture; every fixture has a valid manifest; CI green |
+| P1 | `pine.ta`: core built-ins with Pine semantics (see §7.5 for scope) | every built-in meets the two-oracle rule (§5.8), incl. warm-up `na` count |
+| P2 | `pine.parity`: tolerance report (§5.1–5.7), first divergent bar, warm-up/convergence modes, HTML/MD report | every mutation in the suite (§5.9) is detected at its expected bar |
+| P3 | `pine.lint`: repainting rules with line numbers (§6) | each rule has a positive and negative fixture, incl. the safe `lookahead_on` idiom as a negative; zero findings on a known-clean script |
 | P4 (optional) | transpiler for a declared Pine v5/v6 subset (series, `var`, `[]`, `if`, `for`, `ta.*`, `math.*`) | transpiled output passes `pine.parity` on 10 public indicators |
 
-P0–P3 fit one cloud session before the credit expires on **2026-11-05**. P4 does not.
+P0–P3 in one cloud session before the credit expires on **2026-11-05** is optimistic; §7.5
+gives the cut order. P4 does not fit.
 
-## 5. Risks and open questions
+## 5. Analytical framework (parity spec)
 
-- **Exact Pine semantics come from recall unless checked.** Seed rules (`ta.rma` vs `ta.ema`
-  initialisation), `na` handling and `ta.stdev`'s population vs sample choice must be checked
-  against TradingView's documentation and a real export before they are frozen in tests.
+"Agrees with Pine" must be a precise, falsifiable statement. This section defines it. Items
+marked **(unverified)** are design decisions resting on assumptions that must be checked
+against TradingView documentation or a real export before tests are frozen.
+
+### 5.1 Tolerance
+
+A value passes if `|py − pine| ≤ atol + rtol · |pine|`, evaluated per output column.
+Defaults are set per output class, not globally:
+
+| Class | Examples | Rationale |
+|---|---|---|
+| price-scaled | SMA, EMA, ATR, Bollinger bands, Supertrend line | error scales with price level → `rtol` dominates |
+| bounded oscillator | RSI, stoch, MFI (0–100) | fixed scale → `atol` dominates |
+| unbounded, sign-changing | MACD, momentum | values cross zero → `rtol` alone fails near 0; needs `atol` |
+
+`atol` must be at least half a unit in the last place of the export's printed precision.
+Whether TradingView CSV exports round plotted values to the chart's display precision is
+**(unverified)**: measure it on the first real export and set defaults from the result.
+Tolerances are part of the public API; loosening one is a breaking change (§7.2).
+
+### 5.2 na-mask parity before value parity
+
+The boolean pattern of `na` must match **exactly**. It is reported first and separately: an
+`na` mismatch is a structural bug (wrong warm-up length, wrong `na` propagation), not
+numerical noise, and must not be absorbed by a tolerance.
+
+### 5.3 Warm-up versus convergence
+
+For recursive filters (EMA, RMA, and anything built on them: ATR, RSI, Supertrend) an
+initial-state error `e₀` decays as `e_n = e₀ · (1 − α)ⁿ`. Consequence: **excluding a long
+warm-up hides seeding bugs** — a port with the wrong seed converges and passes. Rules:
+
+- **Aligned mode (default).** Compare from the first bar on which Pine emits a non-`na` value.
+  No additional exclusion. This is the only mode in which a parity pass certifies seeding.
+- **Convergence mode.** Used only when Python's history starts later than Pine's (§5.4).
+  Exclude `n ≥ ln(tol / |e₀|) / ln(1 − α)` bars, with `|e₀|` bounded by the series range.
+  Worked example: RMA(14), `α = 1/14`, `e₀ = 1`, `tol = 1e-8` → `n ≥ 18.42 / 0.0741 ≈ 249`
+  bars. A pass in this mode says nothing about seeding and the report must say so.
+
+The report always states the mode used and the number of bars excluded.
+
+### 5.4 History alignment
+
+Pine's state depends on the first bar loaded on the chart, not the first bar the user looks
+at. Python must start on the same first bar as the export. If it cannot (truncated export,
+data gap), only convergence mode (§5.3) applies.
+
+### 5.5 Discrete outputs
+
+Booleans and categorical outputs (`ta.crossover`, Supertrend direction, signal flags) are
+compared exactly. A mismatch is **excused** only if the continuous inputs to the decision at
+that bar are within tolerance of the tie (e.g. `|a − b| ≤ atol + rtol·|b|` for a crossover of
+`a` over `b`). Excused flips are counted and listed in the report, never silently passed.
+State that depends on a flipped decision (e.g. Supertrend after a direction change) is
+re-synchronised to Pine's value for the next comparison, and the re-sync is reported.
+
+### 5.6 Floating-point model
+
+float64 throughout. Summation order matters: numpy's pairwise `sum` differs from a
+sequential running sum at the ~1e-16 relative level, and a rolling sum that adds and
+subtracts accumulates drift over long series. Pine's internal method for `ta.sma` and
+`ta.stdev` is **(unverified)**. The reference implementation is therefore sequential and
+documented, and any rolling-sum optimisation must state a drift bound or periodically
+recompute the window from scratch.
+
+### 5.7 Report metrics
+
+Per column: mode (§5.3), bars compared, bars excluded, na-mask mismatches, first divergent
+bar (index and timestamp), max absolute error and its bar, max relative error, RMSE, share of
+bars within tolerance, excused discrete flips. A mean error is never reported on its own — it
+hides the localised errors that matter most (seeding, regime changes).
+
+### 5.8 Independent oracles: the two-oracle rule
+
+A built-in is **verified** only when it passes (c) and at least one of (a) or (b):
+
+- **(a) Closed-form cases.** Constant series → SMA = EMA = RMA = the constant; linear ramp →
+  SMA lags the input by `(n − 1)/2` bars; strictly rising series → RSI = 100 once warm;
+  `ta.highest` of a rising series = current value.
+- **(b) Property tests** (`hypothesis`): translation equivariance `f(x + c) = f(x) + c` and
+  scale equivariance `f(kx) = k·f(x)` for moving averages; invariance of RSI and stochastic
+  to positive affine maps; output bounds; `na` count independent of the values.
+- **(c) TradingView reference values** from an export, subject to §7.1.
+
+The reason is that a single oracle can share a misconception with the port (e.g. both
+remembered from the same blog post).
+
+### 5.9 Harness sensitivity: mutation suite
+
+The harness is itself a measurement instrument and needs a measured detection rate.
+P2's single "seed changed" check becomes a suite of deliberate defects applied to correct
+ports:
+
+Let `w` be the first non-`na` bar of the correct output (`length − 1` for SMA/EMA/RMA,
+`length` for RSI). Implemented in `tests/test_mutation_suite.py`; all cases pass (2026-11-03).
+
+| Mutation | Expected first divergence | Status |
+|---|---|---|
+| seed swapped (SMA seed → first-value seed), EMA/RMA/RSI | bar `w`, value | ✅ |
+| length + 1 | bar `w`, na-mask | ✅ sma, ema, rma, rsi |
+| length − 1 | bar `w − 1`, na-mask | ✅ |
+| one-bar look-ahead (`py[t] = ref[t+1]`) | bar `w − 1`, na-mask (shows up as early output, not "first bar") | ✅ |
+| `na` → 0 substitution on an input gap | the gap bar, na-mask | ✅ |
+| first bar dropped | bar `w`, na-mask | ✅ |
+| `stdev` sample instead of population | bar `w`, value | ✅ |
+| stdev, highest, lowest: length ± 1, look-ahead, `na` → 0, first bar dropped | as for SMA | ✅ |
+| ATR: true range = `high − low` (gap terms ignored) | bar `w`, value — **only on gapped data** | ✅ |
+| ATR: first-bar true range `na` (`ta.tr` default instead of `high − low`) | bar `w`, na-mask | ✅ |
+| ATR: `na` close → 0 | gap bar **+ 1**, na-mask (true range uses `close[1]`) | ✅ |
+| ATR: length ± 1, look-ahead, first bar dropped | as for SMA | ✅ |
+| crossover: previous-bar condition dropped; one-bar look-ahead; crossunder swapped in | first differing bar, via `compare_discrete` | ✅ |
+
+46 numeric cases plus the discrete ones; every predicted bar matched on the first run.
+
+Fixture coverage matters as much as the harness: on the gapless random walk every open
+equals the previous close, so the true-range gap terms never dominate and the "`high − low`
+only" ATR bug **passes**. A test records this, and ATR uses a gapped fixture
+(`random_walk_gaps_60`, gap term dominant on 114 of 300 bars). Rule: a fixture must
+exercise every term of the formula under test, and §7.1 manifests should say which terms a
+fixture covers.
+
+Negative controls (must **not** be flagged): SMA via cumulative sums and EMA rearranged as
+`prev + α(x − prev)` both pass, with max error < 1e-10 on the fixture. A further test
+demonstrates the §5.3 hazard: the seed mutant passes in convergence mode once
+`convergence_bars` bars are excluded, and fails in aligned mode.
+
+Observation: every case except the seed swap is caught by the **na mask**, not by values. The
+na-mask check carries most of the suite's detection power, so it must never be relaxed.
+
+P2 is done when every mutation is detected at its expected bar. New mutations are added
+whenever a real porting bug is found that the suite would have missed.
+
+### 5.10 Semantics to verify before tests are frozen
+
+Each item gets a source citation (TradingView reference manual URL and date) or an
+export-derived value in the test docstring:
+
+- seeding of `ta.ema` versus `ta.rma` (SMA seed versus first-value seed). Implemented as SMA
+  seed for both, re-seeding after `na`, per the recalled manual code **(unverified)**;
+- `ta.sma` summation: implemented newest-first with each term divided by `length`, per the
+  recalled manual code; the built-in may sum differently (§5.6). Effect is < 1e-10 on the
+  fixture, so not material at the default tolerances;
+- `ta.stdev`: population by default; deviations with `|d| ≤ 1e-10` zeroed as in the manual's
+  `SUM` helper. The recalled helper also returns the literal `15` for `1e-10 < |d| ≤ 1e-4`,
+  which reads as a documentation bug and is **not** ported — if the built-in really does
+  that, an export will show it;
+- `ta.atr`: first-bar true range `high − low`; the manual's `na(high[1])` test means a `na`
+  close makes the *next* true range `na`, not `high − low`. `ta.tr` without `handle_na`
+  returns `na` on the first bar **(unverified)**;
+- `ta.crossover`/`crossunder`: comparisons with `na` are false, so output is never `na`
+  (v6 semantics; v5 may differ);
+- **possible systematic difference:** recent manual pages may say that `na` values in
+  `source` are *ignored*, with the window extending back over `length` non-`na` values. If
+  so, the propagate-`na` behaviour used here for `sma`, `ema`, `rma`, `stdev`, `highest` and
+  `lowest` is wrong at gaps (it is unaffected on gap-free data). Settle with an export of a
+  series containing `na` before any consumer relies on behaviour at gaps;
+- facts the lint rules rest on **(unverified)**: `lookahead` is the 5th positional parameter
+  of `request.security` (after symbol, timeframe, expression, gaps); `alert()`'s default
+  `freq` is `alert.freq_once_per_bar` (fires intrabar); a negative literal history index
+  does not compile; `barstate.isnew`/`islast` differ between history and realtime as
+  described;
+- `ta.rsi` zero branches: `down == 0 → 100` checked before `up == 0 → 0`, so a flat series
+  gives 100 **(unverified)**;
+- `ta.stdev`'s `biased` default (believed `true`, i.e. population) **(unverified)**;
+- `na` inside a window for `ta.sma`, `ta.highest`, `ta.lowest` (propagate versus skip);
+- `ta.atr` true-range definition on the first bar;
+- v5 versus v6 differences affecting ports: in v6, `bool` cannot be `na`, and `and`/`or`
+  evaluate lazily **(unverified in detail)**.
+
+## 6. Lint soundness
+
+### 6.1 Stance
+
+`pine.lint` is rule-based and **incomplete**. "No findings" means "no known repainting
+pattern", not "does not repaint". The README and the CLI output must both say this.
+
+### 6.2 Correction to the `lookahead_on` rule
+
+Flagging every `lookahead_on` produces false positives on the standard non-repainting idiom:
+
+```pine
+request.security(syminfo.tickerid, "D", close[1], lookahead = barmerge.lookahead_on)
+```
+
+The rule is: flag `lookahead_on` only when the requested expression is not offset by at least
+one bar. Also flag a higher-timeframe `request.security` **without** `lookahead_on` and without
+an offset, because its value changes on realtime bars until the higher-timeframe bar closes.
+The two cases get different messages: future leak in history versus realtime repaint.
+
+### 6.3 Implemented rules (P3, 2026-11-03)
+
+`pine.lint` tokenizes the source (comments and strings handled, calls split into
+positional/named arguments across lines) and applies rules to tokens and calls; it is not a
+parser. Every finding has a **category**, a **severity** and a **confidence**: `definite`
+means the defect is established, `possible` means safety could not be proven. "Could not
+prove safe" is never reported as "proven unsafe".
+
+| id | category | severity / confidence | Fires on |
+|---|---|---|---|
+| `security-lookahead-leak` | future-leak | error/definite when a built-in series is read unoffset (`close`, `close[0]`, `ta.sma(close, 20)`); warning/possible when the offset cannot be proven | `request.security`/`security` with `lookahead_on` (named or 5th positional) |
+| `security-lookahead-unresolved` | future-leak | warning/possible | lookahead given by a variable or expression |
+| `security-realtime-repaint` | realtime-repaint | warning/possible | lookahead off, no provable offset, timeframe not `timeframe.period`/`""` |
+| `security-lower-tf` | realtime-repaint | info/possible | `request.security_lower_tf` |
+| `calc-on-every-tick` | realtime-repaint | warning/definite | `calc_on_every_tick = true` |
+| `varip` | realtime-repaint | warning/definite | any `varip` |
+| `barstate-realtime` | realtime-repaint | warning/possible | `barstate.isrealtime`, `.isnew`, `.islast` |
+| `timenow` | realtime-repaint | warning/possible | `timenow` |
+| `alert-unconfirmed` | realtime-repaint | warning/possible | `alert()` without `freq = alert.freq_once_per_bar_close`, in a script with no `barstate.isconfirmed` |
+| `alertcondition-unconfirmed` | realtime-repaint | info/possible | `alertcondition()` in a script with no `barstate.isconfirmed` |
+| `fill-timing` | fill-timing | info/definite | `calc_on_order_fills = true`, `process_orders_on_close = true` |
+| `negative-history-index` | future-leak | error/definite | `x[-n]`, literal `n` |
+| `negative-plot-offset` | display | info/definite | `plot*`/`bgcolor` with literal `offset = -n` |
+| `unsupported-version` | meta | info/definite | `//@version` missing or < 5 |
+
+**Offset proof (§6.2).** An expression is *proven* offset when its outermost form is
+`atom[k]`, `(expr)[k]` or `f(...)[k]` with literal `k ≥ 1`, or every built-in price/time
+series in it carries `[k ≥ 1]` and no user identifier appears outside a second-or-later call
+argument. It is a *definite leak* when a built-in series is read unoffset outside any
+bare-name call. Everything else is *unproven*. Known error sources:
+
+- **False negative:** a user series passed as a second-or-later call argument
+  (`math.max(close[1], mySeries)`) is assumed to be a parameter such as a length.
+- **False negative:** `alert-unconfirmed` accepts any reference to `barstate.isconfirmed` in
+  the script as a gate, whether or not it gates that alert.
+- **Conservative ("possible"):** user variables are not traced (`src = close` then
+  `request.security(..., src, lookahead_on)`); bare-name calls (`nz(close)`, user functions)
+  may offset internally.
+- **Conservative:** the timeframe argument is not evaluated, so a variable timeframe that is
+  in fact the chart's is still reported by `security-realtime-repaint`.
+
+**Testing.** Fixtures in `tests/fixtures/pine/` carry their expectations inline
+(`// expect: rule-id` on the offending line); the test requires the set of
+`(rule, line)` findings to equal the annotated set exactly, so misses, false positives and
+wrong line numbers all fail. Every rule has a positive fixture; `*_neg.pine` files and
+`clean_indicator.pine` (zero findings, including risky words inside strings and comments)
+are the negatives. An **injection test**, the lint analogue of the mutation suite, inserts
+each rule's pattern into the clean script and requires exactly that rule at that line.
+Suppression: `// pine-lint: ignore[rule-id]` on the line; suppressed findings are reported.
+
+CLI: `pine-lint FILE... [--format text|json] [--strict]`; exit 1 on errors (or warnings
+with `--strict`), 2 on read/tokenize errors.
+
+**Deferred:** `fill_orders_on_standard_ohlc` (default unverified; the rule would fire on
+nearly every strategy); tracing user variables into `request.security`; evaluating
+timeframe arguments against the chart's.
+
+### 6.4 Dynamic check (later, optional)
+
+The only empirical repainting test is to compare values recorded live (e.g. from an alert
+log) against the same bars recomputed on history. Out of scope for P3; noted so the static
+check is not mistaken for proof.
+
+## 7. Data provenance and operations
+
+### 7.1 Fixture manifest
+
+Every fixture ships with a YAML manifest. Parity results are not interpretable without it.
+
+| Field | Why |
+|---|---|
+| symbol class (`synthetic` / public symbol) | licensing (§8) |
+| timeframe, session, timezone | bar boundaries |
+| extended hours on/off | different bars |
+| dividend / split adjustment on/off | different prices |
+| chart type (must be standard candles; Heikin Ashi rejected) | HA changes OHLC |
+| Pine version, indicator inputs | reproducibility |
+| export date | data revisions |
+| timestamp convention (bar open vs close) | off-by-one-bar errors |
+| displayed precision | sets `atol` floor (§5.1) |
+
+The P0 validator rejects a fixture with a missing or inconsistent manifest.
+
+### 7.2 Releases and pinning
+
+Semver plus a CHANGELOG. Breaking changes include any tolerance loosened, any default changed,
+and any change to a built-in's output beyond tolerance. Consumers pin a **commit SHA**, not
+only a tag, because tags are mutable.
+
+### 7.3 CI
+
+Python version matrix. numpy and other numeric deps pinned in the lockfile, because reduction
+results can shift between versions. The mutation suite (§5.9) runs in CI.
+
+### 7.4 Public-repo hygiene
+
+- A denylist of private names checked in pre-commit or CI would itself leak those names if
+  stored here. The denylist lives in the private consumer's repo and runs as a **local** hook
+  against this checkout.
+- Enable GitHub secret scanning and push protection on the repo.
+- "TradingView" and "Pine Script" are third-party marks. Use them descriptively, with a
+  non-affiliation disclaimer in the README. Whether the repo or distribution name needs
+  changing is **(unverified)**.
+
+### 7.5 Scope under the 2026-11-05 deadline
+
+The harness is the value; 25 built-ins that have not met the two-oracle rule are a liability,
+not an asset. Cut order if time runs short, keeping from the top:
+
+1. P0 (loader, `Bars`, manifest validator, CI).
+2. P2 harness with the mutation suite.
+3. Core built-ins to exercise it: `sma`, `ema`, `rma`, `stdev`, `highest`, `lowest`, `atr`,
+   `rsi`, `crossover` — closed-form and property oracles first; TradingView values when an
+   export is available.
+4. P3 lint with the corrected `lookahead_on` rule and the existing rules.
+5. Remaining built-ins and §6.3 candidate rules — defer.
+
+## 8. Risks and open questions
+
+- **Exact Pine semantics come from recall unless checked.** See §5.10. Nothing in that list is
+  frozen in a test without a citation or an export-derived value.
+- **Export precision unknown.** If exports are rounded to display precision, `atol` must be
+  set from it (§5.1), and low-precision symbols weaken the parity claim. Measure first.
 - **Fixture licensing.** Whether TradingView chart exports may be committed to a public repo
   is unchecked. Fallback: synthetic bars, with expected values generated in TradingView and
   committed as numbers only, or kept out of the repo and fetched by the user locally.
-- **Name.** `pine` on PyPI is probably taken; the import name can stay `pine` with a
-  distribution name such as `pine-parity`. Check before P0.
-- **Pine version.** v5 or v6 as the target; pineapple is v5.
+- **Seed bugs masked by warm-up exclusion.** Mitigated by aligned mode as the default (§5.3)
+  and the mutation suite (§5.9).
+- **Lint false confidence.** Mitigated by the stated stance (§6.1); residual risk remains.
+- **Name.** Checked 2026-11-03: `pine` is taken on PyPI, `pine-parity` was free. The
+  distribution is `pine-parity`; the import name stays `pine`. Tradeoff: installing both
+  `pine` (PyPI) and `pine-parity` in one environment would clash on the import name.
+- **Pine version.** v5 or v6 as the target. Existing private scripts are v5; new public
+  examples should be v6. Tradeoff: supporting both doubles the semantics to verify (§5.10).
+- **Private references in history.** The first revision of this file on `main` named private
+  projects. Scrubbed from the current text; still present in git history (see checklist).
 
-## 6. Checklist
+## 9. Checklist
 
-- [ ] **P2 — create the `pine` GitHub repo and run P0–P3 in a cloud session** — uses the
-      expiring cloud credit on public-safe work.
+Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–P4.
+
+- [ ] **[high] Decide on purging private names from `main` history** — rewrite or squash the
+      first plan commit on `main`; move the original §2/§3 detail to the private repo.
       - _Raised:_ 2026-11-03
-      - _Why:_ the credit expires 2026-11-05; `pine` is the only planned item that may sit on GitHub.
-      - _Done when:_ repo exists with CI green and `pytest` collecting tests for `ta`, `parity` and `lint`.
-- [ ] **P3 — confirm TradingView export terms before committing fixtures**
+      - _Why:_ the repo is public, and the first revision named private projects and files.
+        Scrubbing the current text does not remove them from history, forks or caches.
+      - _Done when:_ the owner has decided and, if rewriting, force-pushed `main` themselves.
+        An agent does not force-push `main` without an explicit go-ahead.
+- [ ] **[high] Create the repo structure and run P0–P3 per the §7.5 cut order in a cloud session**
+      — uses the expiring cloud credit on public-safe work.
+      - _Progress 2026-11-03:_ **P0 built** — `pine.Bars`, `pine.io` TradingView CSV
+        loader/writer (byte-exact round trip on both synthetic fixtures, float64-exact by
+        property test), `pine.manifest` validator, synthetic fixtures + generator, CI workflow
+        with actions pinned by SHA. Open P0 gap: the loader's column layout is assumed, not
+        checked against a real export.
+      - _Progress 2026-11-03:_ **P2 built on `sma`, `ema`, `rma`, `rsi`** — `pine.ta` (literal
+        ports of the manual's reference code), `pine.parity` (§5.1–5.7: tolerance classes with
+        printed-precision floor, na-mask first, aligned/convergence modes, discrete compare with
+        near-tie excusal, Markdown report, `check_export`), mutation suite (§5.9) in CI.
+        Built-ins meet oracles (a) and (b) only; (c) awaits a real export, so none is
+        "verified" under §5.8 yet. HTML report deferred; Markdown only.
+      - _Progress 2026-11-03:_ **`stdev`, `highest`, `lowest`, `tr`, `atr`, `crossover`,
+        `crossunder` added**, completing the §7.5 core list; same oracle status. Mutation suite
+        extended (46 numeric cases + discrete), gapped fixture added for ATR.
+      - _Progress 2026-11-03:_ **P3 built** — `pine.lint` with the 14 rules of §6.3, `pine-lint`
+        CLI, annotated fixtures, injection test. P3's exit criterion is met. Remaining for this
+        item: CI green on the pushed commit (checked per push).
+      - _Raised:_ 2026-11-03
+      - _Why:_ the credit expires 2026-11-05.
+      - _Done when:_ CI green and `pytest` collecting tests for `ta`, `parity` (incl. mutation
+        suite) and `lint`.
+- [ ] **[high] Measure TradingView export precision**
+      - _Raised:_ 2026-11-03
+      - _Why:_ sets the `atol` floor (§5.1); every tolerance default depends on it.
+      - _Done when:_ one real export inspected, finding recorded in §5.1, defaults set.
+- [ ] **[high] Verify the §5.10 semantics with citations**
+      - _Raised:_ 2026-11-03
+      - _Why:_ tests frozen on recalled semantics would certify wrong ports.
+      - _Done when:_ each §5.10 item has a citation or export-derived value.
+- [ ] **[high] Confirm TradingView export terms before committing fixtures**
       - _Raised:_ 2026-11-03
       - _Why:_ a public repo with redistributed data that the terms forbid is a takedown risk.
       - _Done when:_ a recorded answer in the `pine` README's data section.
+- [x] **[med] Mutation suite as P2's exit criterion** (§5.9) — done 2026-11-03 except the
+      `stdev` case, which waits for `ta.stdev`.
+- [x] **[med] Fixture manifest schema and validator in P0** (§7.1) — done 2026-11-03.
+- [ ] **[high] Commit TradingView reference values for the core built-ins**
+      - _Raised:_ 2026-11-03
+      - _Why:_ the two-oracle rule (§5.8) needs oracle (c); without it the ports are checked
+        only against their own reading of the manual, which shares any misremembering.
+      - _Done when:_ one export (or numbers-only values, per the terms item) covering `sma`,
+        `ema`, `rsi` (covers `rma`), `stdev`, `highest`, `lowest`, `atr` and `crossover` on a
+        symbol with opening gaps, plus one series containing `na` (settles the §5.10
+        `na`-window question), each with a manifest, passing `check_export` in aligned mode.
+- [x] **[med] Offset-aware `lookahead_on` rule** (§6.2) — done 2026-11-03; the `close[1]`
+      idiom and four variants are negative fixtures.
+- [x] **[low] PyPI name check and trademark disclaimer** (§7.4, §8) — `pine-parity`;
+      disclaimer in README. Name not yet *reserved* on PyPI (needs the owner's account).
+      - _Raised:_ 2026-11-03
+      - _Why:_ a name collision or trademark complaint after release is costlier than before.
+      - _Done when:_ distribution name chosen; README disclaimer present.
