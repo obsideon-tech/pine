@@ -4,9 +4,11 @@ Port TradingView indicators, with a check that the Python output matches Pine ba
 **Status:** pre-alpha. Done: bar schema, TradingView CSV loader, fixture manifests, parity
 harness with mutation suite, `ta.sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`, `tr`,
 `atr`, `crossover`, `crossunder`, `change`, `barssince`, `valuewhen`, `supertrend`, the
-`pine.runtime` bar-by-bar execution model, and the `pine-lint` repainting check. The built-ins
-pass closed-form and property tests but have **not yet been checked against TradingView
-output**; do not rely on them until they have. See [`PINE_PLAN.md`](PINE_PLAN.md).
+`pine.runtime` bar-by-bar execution model, and the `pine-lint` repainting check. The eleven
+core built-ins (`sma` … `crossunder`) and the runtime's semantics **match TradingView on two
+real exports**, including seeding; `change`, `barssince`, `valuewhen` and `supertrend` match
+through the semantics capture. Anything else is checked only against closed-form and property
+tests so far. See [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
 
 ```bash
 uv sync
@@ -54,6 +56,14 @@ uv run pine-lint script.pine --strict --format json
 Each finding says whether the problem is established (`definite`) or whether safety could not
 be proven (`possible`). Rules and their known blind spots are in
 [`PINE_PLAN.md` §6](PINE_PLAN.md#6-lint-soundness).
+
+### Strategies
+
+`pine.strategy` emulates TradingView's backtest engine for ports written on `pine.runtime`
+(`run(script, bars, strategy=StrategyConfig())`, then `ctx.strategy.entry/close/exit` and
+`position_size`, `netprofit`, `equity`, …). First increment: market orders, reversals and
+stop/limit brackets with TradingView's intrabar path assumption; checked against TradingView by
+`tools/capture_strategy.pine` (pending an export). Plan: [`PINE_PLAN.md` §13](PINE_PLAN.md#13-strategy-parity-strategy).
 
 ### Run the TradingView capture
 
@@ -103,11 +113,12 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 
 ## Known gaps
 
-- **External verification has started, not finished.** One TradingView export (NFLX daily,
-  2026-11-03) matched every core built-in after warm-up, confirmed the runtime's execution
-  model and scalar rules, decided how built-ins treat `na`, and corrected `math.round`. Not yet
-  verified: seeding of EMA/RMA/ATR/RSI (that export started mid-history) and the rest of the
-  coverage matrix. See [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
+- **Verified against TradingView so far** (five exports: NFLX 1D/1W, DOGE 1D, BTC 1D,
+  AAPL 60; see [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results)): the
+  eleven core built-ins including seeding, across price scales from ~0.1 to > 10 000, daily,
+  weekly and hourly bars; `na` handling; the runtime's execution model and scalar rules; the
+  three reference ports. Not yet: the strategy emulator, built-ins outside the core eleven,
+  sessions as a feature, `request.security`.
 - **`na` inside windows** follows the observed behaviour by default: `sma`, `stdev`,
   `highest`, `lowest` skip `na`; `ema`, `rma`, `rsi` carry state across `na` and output `na`
   on the `na` bar (`pine.ta.DEFAULT_NA_POLICY`; override with `na_policy=`). Observed on one

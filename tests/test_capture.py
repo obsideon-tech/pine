@@ -11,6 +11,8 @@ from pine.io import TradingViewExport, load_tradingview_csv, write_tradingview_c
 from pine.manifest import load_manifest
 from pine.runtime import run
 from pine.semantics import runtime_capture
+from pine.strategy import StrategyConfig
+from pine.strategy_capture import strategy_capture
 
 ARGS = ["--symbol", "EXAMPLE:SYM", "--timeframe", "60", "--timezone", "UTC"]
 
@@ -21,6 +23,7 @@ def combined_export(tmp_path: Path, semantics: bool = True) -> Path:
     cols = dict(ref.columns)
     if semantics:
         cols |= dict(run(runtime_capture, ref.bars).columns)
+        cols |= dict(run(strategy_capture, ref.bars, strategy=StrategyConfig()).columns)
     exp = TradingViewExport(
         ref.bars, cols, ("time", "open", "high", "low", "close", "Volume", *cols), "unix"
     )
@@ -34,7 +37,9 @@ def test_manifest_written_valid_and_not_overwritten(tmp_path, capsys):
     assert main(["manifest", str(csv), *ARGS]) == 0
     m = load_manifest(csv.with_suffix(".yaml"))
     assert m.symbol == "EXAMPLE:SYM" and m.timeframe == "60" and m.adjustment == "splits"
-    assert m.indicator["name"] == "pine reference capture + pine semantics capture"
+    assert m.indicator["name"] == (
+        "pine reference capture + pine semantics capture + pine strategy capture"
+    )
     assert m.indicator["inputs"]["semantics.ST_FACTOR"] == 3.0
     assert m.displayed_precision >= 2
     assert "next: uv run python -m pine.capture check" in capsys.readouterr().out
@@ -72,6 +77,7 @@ def test_check_runs_both_and_writes_report(tmp_path, capsys):
     text = out.read_text()
     assert "**Overall: PASS**" in text
     assert "## Gap-free columns" in text and "## Pine semantics" in text
+    assert "## Strategy (broker emulator)" in text
     assert "Symbol `EXAMPLE:SYM`" in text and "Skipped" not in text
 
 

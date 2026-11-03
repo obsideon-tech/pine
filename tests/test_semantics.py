@@ -186,3 +186,21 @@ def test_cli_json_and_errors(bars, runtime_result, tmp_path, capsys):
     assert main([str(path), "--manifest", str(tmp_path / "EXPORT.yaml")]) == 2
     err = capsys.readouterr().err
     assert "manifest not found" in err and "python -m pine.capture manifest" in err
+
+
+def test_live_last_bar_varip_is_excluded_and_reported(bars, runtime_result, tmp_path, capsys):
+    # On a 24/7 market the last exported bar is live: varip has kept intrabar updates there.
+    cols = dict(runtime_result.columns)
+    vi = np.array(cols["varip_acc"])
+    vi[-1] += 3 * bars.close[-1]  # three extra ticks
+    cols["varip_acc"] = vi
+    path = _export_from(bars, cols, tmp_path / "live.csv")
+    d = next(d for d in decide(load_tradingview_csv(path, timeframe="60")) if d.group == "var")
+    assert d.matching == ("cumulative",)
+    assert "last bar was live" in d.note
+    # A varip error before the last bar is still caught.
+    vi[-5] += 1.0
+    cols["varip_acc"] = vi
+    path = _export_from(bars, cols, tmp_path / "bad.csv")
+    d = next(d for d in decide(load_tradingview_csv(path, timeframe="60")) if d.group == "var")
+    assert d.matching == ()

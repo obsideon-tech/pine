@@ -1,0 +1,42 @@
+//@version=6
+// pine strategy capture (PINE_PLAN.md §13)
+//
+// A deterministic strategy (signals depend only on bar_index) that exercises market entries,
+// closes, a reversal and a stop/limit bracket, and plots the strategy state every bar so a
+// chart-data export can be compared with pine.strategy's broker emulator. Self-written and
+// public; not a trading strategy.
+//
+// Use: add to the same chart as the capture indicators, export chart data, then
+//   uv run python -m pine.capture check <your.csv>        (guide: docs/CAPTURE.md)
+//
+// Plot titles and constants must match src/pine/strategy_capture.py.
+strategy("pine strategy capture", overlay = false, precision = 10, initial_capital = 100000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 1, commission_value = 0, slippage = 0, process_orders_on_close = false, calc_on_every_tick = false, calc_on_order_fills = false)
+
+const int CYCLE = 40
+const float BRACKET = 0.01
+
+int ph = bar_index % CYCLE
+
+if ph == 0
+    strategy.entry("L", strategy.long)
+if ph == 8
+    strategy.close("L")
+if ph == 12
+    strategy.entry("S", strategy.short)
+if ph == 20
+    strategy.entry("L", strategy.long)
+if ph == 26
+    strategy.close_all()
+if ph == 30
+    strategy.entry("B", strategy.long)
+    strategy.exit("BX", "B", stop = close * (1 - BRACKET), limit = close * (1 + BRACKET))
+if ph == 38
+    strategy.close("B")
+
+plot(bar_index, "strat_bar_index")
+plot(strategy.position_size, "strat_position_size")
+plot(strategy.position_avg_price, "strat_avg_price")
+plot(strategy.netprofit, "strat_netprofit")
+plot(strategy.openprofit, "strat_openprofit")
+plot(strategy.equity, "strat_equity")
+plot(strategy.closedtrades, "strat_closedtrades")

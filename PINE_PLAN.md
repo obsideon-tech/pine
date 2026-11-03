@@ -54,7 +54,7 @@ documented here.
 | Phase | Delivers | Done when | Status (2026-11-03) |
 |---|---|---|---|
 | P0 | Repo, licence, CI, `Bars` schema (ts, OHLCV, timeframe, session tz), TradingView CSV loader, fixture manifest schema + validator (§7.1) | loader round-trips a TradingView export fixture; every fixture has a valid manifest; CI green | done on synthetic fixtures; layout unchecked against a real export |
-| P1 | `pine.ta`: core built-ins with Pine semantics (see §7.5 for scope) | every built-in meets the two-oracle rule (§5.8), incl. warm-up `na` count | core subset built; oracles (a)+(b) only, (c) missing → **not done** |
+| P1 | `pine.ta`: core built-ins with Pine semantics (see §7.5 for scope) | every built-in meets the two-oracle rule (§5.8), incl. warm-up `na` count | **core subset done** (2026-11-03): sma, ema, rma, rsi, stdev, highest, lowest, tr, atr, crossover, crossunder meet (a)+(b)+(c) on two exports (§12); batch 1 (§11 F) not started |
 | P2 | `pine.parity`: tolerance report (§5.1–5.7), first divergent bar, warm-up/convergence modes, HTML/MD report | every mutation in the suite (§5.9) is detected at its expected bar | done; Markdown report only (HTML deferred) |
 | P3 | `pine.lint`: repainting rules with line numbers (§6) | each rule has a positive and negative fixture, incl. the safe `lookahead_on` idiom as a negative; zero findings on a known-clean script | done; precision/recall on real scripts unmeasured (§10 C3) |
 | P4 (optional) | transpiler for a declared Pine v5/v6 subset (series, `var`, `[]`, `if`, `for`, `ta.*`, `math.*`) | transpiled output passes `pine.parity` on 10 public indicators | not started; after P5–P6 (§11 J) |
@@ -311,6 +311,8 @@ export-derived value in the test docstring:
   `freq` is `alert.freq_once_per_bar` (fires intrabar); a negative literal history index
   does not compile; `barstate.isnew`/`islast` differ between history and realtime as
   described;
+- `varip` on the live (last, unconfirmed) bar keeps intrabar ticks, so it differs from `var`
+  there; observed on DOGE/BTC exports (§12). Checks exclude that row.
 - execution model and scalar rules (`pine.runtime`, §11 E1). **Confirmed by export
   (2026-11-03, §12):** `math.round` ties round **away from zero** (`round(-2.5) = -3`; the
   earlier `floor(x + 0.5)` assumption was wrong and is fixed); `%` truncates (`-7 % 3 = -1`);
@@ -580,8 +582,10 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
 - [x] **[med] Mutation suite as P2's exit criterion** (§5.9) — done 2026-11-03 except the
       `stdev` case, which waits for `ta.stdev`.
 - [x] **[med] Fixture manifest schema and validator in P0** (§7.1) — done 2026-11-03.
-- [ ] **[high] A1 — Reference values for the core built-ins via a capture script and a
-      coverage matrix** (§10 A1; supersedes the earlier "commit reference values" item)
+- [x] **[high] A1 — Reference values for the core built-ins via a capture script and a
+      coverage matrix** (§10 A1; supersedes the earlier "commit reference values" item) —
+      _2026-11-03: two exports passed (NFLX 1D mid-history, NFLX 1W from bar 0; §12). Core
+      eleven verified incl. seeding. Remaining rows: price < 1, price > 10 000, intraday._
       - _Raised:_ 2026-11-03
       - _Why:_ the two-oracle rule (§5.8) needs oracle (c); without it the ports are checked
         only against their own reading of the manual, which shares any misremembering.
@@ -593,6 +597,8 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         `tools/reference_capture.example.yaml`. Consistency tests tie the Pine constants and
         plot titles to `pine.reference`; the script is lint-clean. Synthetic end-to-end tests
         prove the plumbing only. **Remaining: the exports themselves (owner action).**
+      _2026-11-03: **matrix complete** — DOGE 1D (price < 1, from bar 0), BTC 1D (price
+      > 10 000, mid-history), AAPL 60 (intraday session, mid-history) added; see §12._
 - [x] **[high] A2 — `na_policy` switch and the opposite-policy mutant** (§10 A2) — **decided
       2026-11-03** by the NFLX export (§12): windowed built-ins `skip`, recursive ones
       `skip_na_out`; these are now the defaults (`pine.ta.DEFAULT_NA_POLICY`) in `pine.ta` and
@@ -676,7 +682,14 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Why:_ multi-timeframe logic is common in complex indicators.
       - _Done when:_ HTF alignment with lookahead on/off and gaps on/off passes a capture, or the
         feed difference is documented and an exported HTF series can be supplied as input.
-- [ ] **[low] I — Decide whether strategy (`strategy.*`) parity is in scope** (§11 I) — owner.
+- [x] **[low] I — Decide whether strategy (`strategy.*`) parity is in scope** (§11 I) — owner
+      decided 2026-11-03: in scope. See §13.
+- [ ] **[high] S1 — Broker emulator, first increment, verified by export** (§13)
+      - _Raised:_ 2026-11-03
+      - _Why:_ strategy results (positions, P&L, equity) must match TradingView bar for bar.
+      - _Done when:_ an export of `tools/capture_strategy.pine` decides every S1 rule and the
+        baseline passes. _Progress 2026-11-03: emulator, capture script and checker built;
+        synthetic tests pass; export pending (owner)._
 - [ ] **[med] C3 — Lint precision/recall on a local corpus** (§10 C3)
       - _Raised:_ 2026-11-03
       - _Why:_ rule quality on real scripts is unknown.
@@ -1003,7 +1016,8 @@ If "same results" includes backtests, `strategy.*` needs a broker emulator (orde
 OHLC path assumption for intrabar fills, `process_orders_on_close`, pyramiding, commission,
 slippage, margin) and a different reference: TradingView's *List of Trades* export, compared
 trade by trade. This is a project of similar size to E–G. Recommendation: finish indicator
-parity first; decide explicitly whether strategy parity is a goal.
+parity first; decide explicitly whether strategy parity is a goal. *Decided 2026-11-03 by the
+owner: **in scope**. Plan and first increment: §13.*
 
 ### J. Transpiler, last
 
@@ -1070,7 +1084,99 @@ equal to `pine.ta` bit for bit under every policy); mutation-suite expectations 
 for the new defaults (`highest` with `na → 0` is detected three bars after the gap on the
 fixture, data-dependently, since a 0 cannot raise a maximum).
 
-**Still open:** seeding of `ema`/`rma`/`atr`/`rsi` and pre-event `barssince`/`valuewhen` —
-next export: a chart whose whole history fits one export (e.g. NFLX weekly, ≈1 270 bars), so
-it starts at `bar_index` 0. Also outstanding: the rest of the §10 A1 matrix (price < 1,
-> 10 000, opening gaps, DST).
+Closed by the weekly export below: seeding and pre-event `barssince`/`valuewhen`.
+
+### 2026-11-03 — BATS:NFLX, 1W, both capture scripts (starts at bar 0)
+
+1277 rows, `bar_index` 0 → 1276: the whole history in one export, so every check ran in
+**aligned mode with zero rows excluded**. **Overall: PASS.**
+
+| Item | Result |
+|---|---|
+| All 13 numeric built-in columns | **match** over 1257–1277 bars; max abs error 4.3e-13 (stdev), others ≤ 1.1e-13, highest/lowest/tr exactly 0 |
+| **Seeding** of `ema`, `rma`, `atr`, `rsi`, `ema(9)`, `ema(21)` | **verified**: first values match; seed-error detection threshold (MDE, §5.7) ≈ 2e-10 |
+| `crossover`, `crossunder` | **match** exactly |
+| `na` inside windows | **same decision as the daily export** (second, independent confirmation): windowed `skip`, recursive `skip_na_out` |
+| All 20 semantics groups | **match** from bar 0, no synchronisation: incl. `barssince`/`valuewhen` before the first event (`na`), Supertrend through its ATR warm-up (lower band held at `nz(na) = 0`), trailing stop, regime machine (`per_call`) |
+
+With both exports, the eleven core built-ins meet the two-oracle rule (§5.8: closed-form or
+property oracles plus TradingView values) on: daily and weekly bars, a 6 151-bar history,
+opening gaps and daylight-saving changes (both inherent in NFLX daily), an export starting
+at bar 0 and one starting mid-history. **Remaining matrix rows (§10 A1):** price < 1,
+price > 10 000, an intraday timeframe (sessions/time zones). Built-ins outside the core
+eleven, `request.security` and sessions remain unverified.
+
+### 2026-11-03 — BINANCE:DOGEUSDT 1D, BITSTAMP:BTCUSD 1D, BATS:AAPL 60 (matrix rows)
+
+Indicator and semantics captures only (the strategy capture was not yet in the checker the
+owner ran, so §13 remains unverified).
+
+| Export | Start | Indicators | `na` policy | Semantics |
+|---|---|---|---|---|
+| DOGEUSDT 1D (price < 1) | bar 0, 2 679 rows | all 16 columns **match**, aligned, incl. seeding (max error ≤ 4.3e-14) | same decision | all match except `varip_acc` on the **last row only** (below) |
+| BTCUSD 1D (price > 10 000) | bar 2662 | all **match** (max abs 1.6e-9 on stdev = 3.5e-12 relative; `rtol` regime) | same decision | all match except the same last-row `varip_acc`; `barssince`/`valuewhen` not decidable |
+| AAPL 60 (intraday, sessions) | bar 17845 | all **match** | same decision | all match; `regime` not decidable (no whipsaw after sync) |
+
+**`varip` on the last bar.** On the two 24/7 crypto charts the last exported bar was live;
+there `varip_acc` exceeded `var_acc` while every earlier row matched exactly. That is
+documented `varip` behaviour (it keeps intrabar ticks on the realtime bar), not a runtime
+error: the AAPL export, taken with the market closed, shows no difference. The checker now
+excludes the last row for `varip_acc` and reports when the last bar was live
+(`pine.semantics`, test `test_live_last_bar_varip_is_excluded_and_reported`).
+
+**Coverage.** With NFLX 1D/1W these five exports cover: price scales ~0.1, ~100–1 000 and
+> 10 000; daily, weekly and hourly bars; equities and 24/7 crypto; opening gaps; DST; exports
+from bar 0 and mid-history. The `na`-handling decision was identical in all five. The core
+eleven built-ins, `na` handling, execution model and scalar rules are verified across the
+§10 A1 matrix. Still unverified: the strategy emulator (§13), built-ins outside the core,
+sessions as a *feature* (AAPL hourly only shows that session bars don't break anything), and
+`request.security`.
+
+## 13. Strategy parity (`strategy.*`)
+
+Decided in scope on 2026-11-03 (§11 I). Goal: a Python port of a Pine strategy reproduces
+TradingView's per-bar strategy state — position size, average price, net profit, open profit,
+equity, closed-trade count — and, later, its trade list.
+
+**Reference.** The chart-data export already used for indicators: a strategy can `plot()`
+`strategy.position_size`, `strategy.netprofit` etc., so per-bar parity needs no new export
+format and reuses the whole harness (tolerances, MDE, truncation handling). A trade-by-trade
+comparison against the Strategy Tester's *List of Trades* export comes later; that export's
+availability and format are **unverified**.
+
+**Emulator.** `pine.strategy.Broker`, attached by `run(script, bars, strategy=StrategyConfig())`
+as `ctx.strategy` (`entry`, `close`, `close_all`, `exit(stop=, limit=)`, and the state
+properties). Each fill rule is a probed hypothesis, as for the execution model (§11 E1):
+
+| Rule | Expected (default) | Alternative | Why it matters |
+|---|---|---|---|
+| fill timing | `next_open`: orders from bar t fill at bar t+1's open | `same_close` | every fill price |
+| intrabar path | `nearest_extreme_first`: open → nearer extreme → other extreme → close (ties: high first) | `high_first` | which of stop/limit fills when both are inside a bar |
+| gap fill | `open`: a level already passed at the open fills at the open | `order_price` | stops through gaps |
+| exit on the entry bar | `yes`: a bracket can fill on the bar its entry filled | `no` | same-bar exits |
+
+All four expectations are **unverified**. `tools/capture_strategy.pine` is a deterministic
+40-bar cycle (signals from `bar_index` only): long entry, close, short entry, a reversal to
+long, close-all, and a long with a ±1 % stop/limit bracket. `python -m pine.capture check`
+compares its six plotted columns with the emulator under each hypothesis (`pine.strategy_capture`).
+Exports that start mid-history are compared from the first flat bar (phase 39), with
+cumulative columns anchored there.
+
+Verification so far: hand-computed scenarios (fills, reversal, pyramiding 1, brackets along
+both paths, gaps, same-bar exits, same-close timing) and accounting identities
+(equity = capital + net + open profit; net profit = sum of trades); on long synthetic data
+every rule's hypotheses are distinguishable and each is recovered from an export made with it.
+
+**Increments.**
+
+| Step | Adds | Status |
+|---|---|---|
+| S1 | market entries/closes/reversals, stop/limit brackets, fixed qty, no costs, pyramiding 1 | built; export pending |
+| S2 | commission (percent / per contract), slippage (ticks), qty types (percent of equity, cash), pyramiding > 1, `strategy.order`, trailing stops (`trail_points`/`trail_offset`) | — |
+| S3 | `process_orders_on_close`, `calc_on_order_fills`, margin calls, `strategy.risk.*` | — |
+| S4 | trade-list comparison (List of Trades export), strategy reports (max drawdown, profit factor) | — |
+
+**Known limits.** The intrabar path is TradingView's *assumption*, not real tick order; the
+emulator reproduces the assumption, which is the goal (parity), not market reality. The Bar
+Magnifier option (intrabar data) changes fills and is out of scope until S3+. Results apply to
+historical bars only (§8).
