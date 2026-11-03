@@ -54,7 +54,7 @@ documented here.
 | Phase | Delivers | Done when | Status (2026-11-03) |
 |---|---|---|---|
 | P0 | Repo, licence, CI, `Bars` schema (ts, OHLCV, timeframe, session tz), TradingView CSV loader, fixture manifest schema + validator (§7.1) | loader round-trips a TradingView export fixture; every fixture has a valid manifest; CI green | done on synthetic fixtures; layout unchecked against a real export |
-| P1 | `pine.ta`: core built-ins with Pine semantics (see §7.5 for scope) | every built-in meets the two-oracle rule (§5.8), incl. warm-up `na` count | core subset built; oracles (a)+(b) only, (c) missing → **not done** |
+| P1 | `pine.ta`: core built-ins with Pine semantics (see §7.5 for scope) | every built-in meets the two-oracle rule (§5.8), incl. warm-up `na` count | **core subset done** (2026-11-03): sma, ema, rma, rsi, stdev, highest, lowest, tr, atr, crossover, crossunder meet (a)+(b)+(c) on two exports (§12); batch 1 (§11 F) not started |
 | P2 | `pine.parity`: tolerance report (§5.1–5.7), first divergent bar, warm-up/convergence modes, HTML/MD report | every mutation in the suite (§5.9) is detected at its expected bar | done; Markdown report only (HTML deferred) |
 | P3 | `pine.lint`: repainting rules with line numbers (§6) | each rule has a positive and negative fixture, incl. the safe `lookahead_on` idiom as a negative; zero findings on a known-clean script | done; precision/recall on real scripts unmeasured (§10 C3) |
 | P4 (optional) | transpiler for a declared Pine v5/v6 subset (series, `var`, `[]`, `if`, `for`, `ta.*`, `math.*`) | transpiled output passes `pine.parity` on 10 public indicators | not started; after P5–P6 (§11 J) |
@@ -581,7 +581,9 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       `stdev` case, which waits for `ta.stdev`.
 - [x] **[med] Fixture manifest schema and validator in P0** (§7.1) — done 2026-11-03.
 - [ ] **[high] A1 — Reference values for the core built-ins via a capture script and a
-      coverage matrix** (§10 A1; supersedes the earlier "commit reference values" item)
+      coverage matrix** (§10 A1; supersedes the earlier "commit reference values" item) —
+      _2026-11-03: two exports passed (NFLX 1D mid-history, NFLX 1W from bar 0; §12). Core
+      eleven verified incl. seeding. Remaining rows: price < 1, price > 10 000, intraday._
       - _Raised:_ 2026-11-03
       - _Why:_ the two-oracle rule (§5.8) needs oracle (c); without it the ports are checked
         only against their own reading of the manual, which shares any misremembering.
@@ -1070,7 +1072,24 @@ equal to `pine.ta` bit for bit under every policy); mutation-suite expectations 
 for the new defaults (`highest` with `na → 0` is detected three bars after the gap on the
 fixture, data-dependently, since a 0 cannot raise a maximum).
 
-**Still open:** seeding of `ema`/`rma`/`atr`/`rsi` and pre-event `barssince`/`valuewhen` —
-next export: a chart whose whole history fits one export (e.g. NFLX weekly, ≈1 270 bars), so
-it starts at `bar_index` 0. Also outstanding: the rest of the §10 A1 matrix (price < 1,
-> 10 000, opening gaps, DST).
+Closed by the weekly export below: seeding and pre-event `barssince`/`valuewhen`.
+
+### 2026-11-03 — BATS:NFLX, 1W, both capture scripts (starts at bar 0)
+
+1277 rows, `bar_index` 0 → 1276: the whole history in one export, so every check ran in
+**aligned mode with zero rows excluded**. **Overall: PASS.**
+
+| Item | Result |
+|---|---|
+| All 13 numeric built-in columns | **match** over 1257–1277 bars; max abs error 4.3e-13 (stdev), others ≤ 1.1e-13, highest/lowest/tr exactly 0 |
+| **Seeding** of `ema`, `rma`, `atr`, `rsi`, `ema(9)`, `ema(21)` | **verified**: first values match; seed-error detection threshold (MDE, §5.7) ≈ 2e-10 |
+| `crossover`, `crossunder` | **match** exactly |
+| `na` inside windows | **same decision as the daily export** (second, independent confirmation): windowed `skip`, recursive `skip_na_out` |
+| All 20 semantics groups | **match** from bar 0, no synchronisation: incl. `barssince`/`valuewhen` before the first event (`na`), Supertrend through its ATR warm-up (lower band held at `nz(na) = 0`), trailing stop, regime machine (`per_call`) |
+
+With both exports, the eleven core built-ins meet the two-oracle rule (§5.8: closed-form or
+property oracles plus TradingView values) on: daily and weekly bars, a 6 151-bar history,
+opening gaps and daylight-saving changes (both inherent in NFLX daily), an export starting
+at bar 0 and one starting mid-history. **Remaining matrix rows (§10 A1):** price < 1,
+price > 10 000, an intraday timeframe (sessions/time zones). Built-ins outside the core
+eleven, `request.security` and sessions remain unverified.

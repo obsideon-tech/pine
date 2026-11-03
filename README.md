@@ -4,9 +4,11 @@ Port TradingView indicators, with a check that the Python output matches Pine ba
 **Status:** pre-alpha. Done: bar schema, TradingView CSV loader, fixture manifests, parity
 harness with mutation suite, `ta.sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`, `tr`,
 `atr`, `crossover`, `crossunder`, `change`, `barssince`, `valuewhen`, `supertrend`, the
-`pine.runtime` bar-by-bar execution model, and the `pine-lint` repainting check. The built-ins
-pass closed-form and property tests but have **not yet been checked against TradingView
-output**; do not rely on them until they have. See [`PINE_PLAN.md`](PINE_PLAN.md).
+`pine.runtime` bar-by-bar execution model, and the `pine-lint` repainting check. The eleven
+core built-ins (`sma` … `crossunder`) and the runtime's semantics **match TradingView on two
+real exports**, including seeding; `change`, `barssince`, `valuewhen` and `supertrend` match
+through the semantics capture. Anything else is checked only against closed-form and property
+tests so far. See [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
 
 ```bash
 uv sync
@@ -103,11 +105,11 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 
 ## Known gaps
 
-- **External verification has started, not finished.** One TradingView export (NFLX daily,
-  2026-11-03) matched every core built-in after warm-up, confirmed the runtime's execution
-  model and scalar rules, decided how built-ins treat `na`, and corrected `math.round`. Not yet
-  verified: seeding of EMA/RMA/ATR/RSI (that export started mid-history) and the rest of the
-  coverage matrix. See [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
+- **Verified against TradingView so far** (two NFLX exports, daily and weekly; see
+  [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results)): the eleven core
+  built-ins including seeding, `na` handling, the runtime's execution model and scalar rules,
+  and the three reference ports. Not yet: prices below 1 or above 10 000, intraday charts,
+  and every built-in outside the core eleven.
 - **`na` inside windows** follows the observed behaviour by default: `sma`, `stdev`,
   `highest`, `lowest` skip `na`; `ema`, `rma`, `rsi` carry state across `na` and output `na`
   on the `na` bar (`pine.ta.DEFAULT_NA_POLICY`; override with `na_policy=`). Observed on one
