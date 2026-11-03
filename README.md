@@ -57,6 +57,14 @@ Each finding says whether the problem is established (`definite`) or whether saf
 be proven (`possible`). Rules and their known blind spots are in
 [`PINE_PLAN.md` §6](PINE_PLAN.md#6-lint-soundness).
 
+### Strategies
+
+`pine.strategy` emulates TradingView's backtest engine for ports written on `pine.runtime`
+(`run(script, bars, strategy=StrategyConfig())`, then `ctx.strategy.entry/close/exit` and
+`position_size`, `netprofit`, `equity`, …). First increment: market orders, reversals and
+stop/limit brackets with TradingView's intrabar path assumption; checked against TradingView by
+`tools/capture_strategy.pine` (pending an export). Plan: [`PINE_PLAN.md` §13](PINE_PLAN.md#13-strategy-parity-strategy).
+
 ### Run the TradingView capture
 
 This is the step that turns "unverified" into "verified". Put `tools/reference_capture.pine`

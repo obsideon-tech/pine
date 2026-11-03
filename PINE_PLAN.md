@@ -678,7 +678,14 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Why:_ multi-timeframe logic is common in complex indicators.
       - _Done when:_ HTF alignment with lookahead on/off and gaps on/off passes a capture, or the
         feed difference is documented and an exported HTF series can be supplied as input.
-- [ ] **[low] I — Decide whether strategy (`strategy.*`) parity is in scope** (§11 I) — owner.
+- [x] **[low] I — Decide whether strategy (`strategy.*`) parity is in scope** (§11 I) — owner
+      decided 2026-11-03: in scope. See §13.
+- [ ] **[high] S1 — Broker emulator, first increment, verified by export** (§13)
+      - _Raised:_ 2026-11-03
+      - _Why:_ strategy results (positions, P&L, equity) must match TradingView bar for bar.
+      - _Done when:_ an export of `tools/capture_strategy.pine` decides every S1 rule and the
+        baseline passes. _Progress 2026-11-03: emulator, capture script and checker built;
+        synthetic tests pass; export pending (owner)._
 - [ ] **[med] C3 — Lint precision/recall on a local corpus** (§10 C3)
       - _Raised:_ 2026-11-03
       - _Why:_ rule quality on real scripts is unknown.
@@ -1005,7 +1012,8 @@ If "same results" includes backtests, `strategy.*` needs a broker emulator (orde
 OHLC path assumption for intrabar fills, `process_orders_on_close`, pyramiding, commission,
 slippage, margin) and a different reference: TradingView's *List of Trades* export, compared
 trade by trade. This is a project of similar size to E–G. Recommendation: finish indicator
-parity first; decide explicitly whether strategy parity is a goal.
+parity first; decide explicitly whether strategy parity is a goal. *Decided 2026-11-03 by the
+owner: **in scope**. Plan and first increment: §13.*
 
 ### J. Transpiler, last
 
@@ -1093,3 +1101,52 @@ opening gaps and daylight-saving changes (both inherent in NFLX daily), an expor
 at bar 0 and one starting mid-history. **Remaining matrix rows (§10 A1):** price < 1,
 price > 10 000, an intraday timeframe (sessions/time zones). Built-ins outside the core
 eleven, `request.security` and sessions remain unverified.
+
+## 13. Strategy parity (`strategy.*`)
+
+Decided in scope on 2026-11-03 (§11 I). Goal: a Python port of a Pine strategy reproduces
+TradingView's per-bar strategy state — position size, average price, net profit, open profit,
+equity, closed-trade count — and, later, its trade list.
+
+**Reference.** The chart-data export already used for indicators: a strategy can `plot()`
+`strategy.position_size`, `strategy.netprofit` etc., so per-bar parity needs no new export
+format and reuses the whole harness (tolerances, MDE, truncation handling). A trade-by-trade
+comparison against the Strategy Tester's *List of Trades* export comes later; that export's
+availability and format are **unverified**.
+
+**Emulator.** `pine.strategy.Broker`, attached by `run(script, bars, strategy=StrategyConfig())`
+as `ctx.strategy` (`entry`, `close`, `close_all`, `exit(stop=, limit=)`, and the state
+properties). Each fill rule is a probed hypothesis, as for the execution model (§11 E1):
+
+| Rule | Expected (default) | Alternative | Why it matters |
+|---|---|---|---|
+| fill timing | `next_open`: orders from bar t fill at bar t+1's open | `same_close` | every fill price |
+| intrabar path | `nearest_extreme_first`: open → nearer extreme → other extreme → close (ties: high first) | `high_first` | which of stop/limit fills when both are inside a bar |
+| gap fill | `open`: a level already passed at the open fills at the open | `order_price` | stops through gaps |
+| exit on the entry bar | `yes`: a bracket can fill on the bar its entry filled | `no` | same-bar exits |
+
+All four expectations are **unverified**. `tools/capture_strategy.pine` is a deterministic
+40-bar cycle (signals from `bar_index` only): long entry, close, short entry, a reversal to
+long, close-all, and a long with a ±1 % stop/limit bracket. `python -m pine.capture check`
+compares its six plotted columns with the emulator under each hypothesis (`pine.strategy_capture`).
+Exports that start mid-history are compared from the first flat bar (phase 39), with
+cumulative columns anchored there.
+
+Verification so far: hand-computed scenarios (fills, reversal, pyramiding 1, brackets along
+both paths, gaps, same-bar exits, same-close timing) and accounting identities
+(equity = capital + net + open profit; net profit = sum of trades); on long synthetic data
+every rule's hypotheses are distinguishable and each is recovered from an export made with it.
+
+**Increments.**
+
+| Step | Adds | Status |
+|---|---|---|
+| S1 | market entries/closes/reversals, stop/limit brackets, fixed qty, no costs, pyramiding 1 | built; export pending |
+| S2 | commission (percent / per contract), slippage (ticks), qty types (percent of equity, cash), pyramiding > 1, `strategy.order`, trailing stops (`trail_points`/`trail_offset`) | — |
+| S3 | `process_orders_on_close`, `calc_on_order_fills`, margin calls, `strategy.risk.*` | — |
+| S4 | trade-list comparison (List of Trades export), strategy reports (max drawdown, profit factor) | — |
+
+**Known limits.** The intrabar path is TradingView's *assumption*, not real tick order; the
+emulator reproduces the assumption, which is the goal (parity), not market reality. The Bar
+Magnifier option (intrabar data) changes fills and is out of scope until S3+. Results apply to
+historical bars only (§8).

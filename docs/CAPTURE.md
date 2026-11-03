@@ -29,9 +29,11 @@ Note three things for step 5:
 Also check whether **ADJ** ("Adjust data for dividends") is switched on at the bottom of the
 chart, and whether **extended hours** are shown. You'll pass both in step 5.
 
-## 2. Add the two scripts
+## 2. Add the scripts
 
-For each of `tools/reference_capture.pine` and `tools/capture_semantics.pine`:
+For each of `tools/reference_capture.pine`, `tools/capture_semantics.pine` and
+`tools/capture_strategy.pine` (the strategy one is optional; it checks the backtest engine
+emulation, `PINE_PLAN.md` §13):
 
 1. Open the **Pine Editor** (bottom panel of the chart).
 2. Create a new indicator (**Open → New indicator**, or the "+" / new-script button).
@@ -133,12 +135,54 @@ report. Things to know:
 ## More rows
 
 The full verification matrix (`PINE_PLAN.md` §10 A1) repeats steps 1 and 3–7 on different
-charts:
+charts. Done so far: NFLX daily (opening gaps, DST, long history) and NFLX weekly (from bar 0).
+Remaining rows, with exact commands. In TradingView, switch the chart's symbol and timeframe
+(the scripts stay on the chart), export, then run the three commands. `ls -t … | head -1`
+picks the newest export matching the symbol, whatever suffix TradingView adds.
 
-- a price below 1;
-- a price above 10 000;
-- a symbol with opening gaps;
-- 5 000 or more bars;
-- daily bars across a daylight-saving change.
+**Price below 1: `BINANCE:DOGEUSDT`, daily** (crypto: UTC, no adjustment)
 
-The scripts stay on the chart when you switch symbol or timeframe.
+```bash
+F=$(ls -t ~/Sync/obsideon/vault/pine_test/BINANCE_DOGEUSDT*1D*.csv | head -1); echo "$F"
+```
+
+```bash
+uv run python -m pine.capture manifest "$F" --symbol BINANCE:DOGEUSDT --timeframe 1D --timezone UTC --adjustment none
+```
+
+```bash
+uv run python -m pine.capture check "$F" --out ~/Sync/obsideon/vault/pine_test/doge_1d_report.md
+```
+
+**Price above 10 000: `BITSTAMP:BTCUSD`, daily**
+
+```bash
+F=$(ls -t ~/Sync/obsideon/vault/pine_test/BITSTAMP_BTCUSD*1D*.csv | head -1); echo "$F"
+```
+
+```bash
+uv run python -m pine.capture manifest "$F" --symbol BITSTAMP:BTCUSD --timeframe 1D --timezone UTC --adjustment none
+```
+
+```bash
+uv run python -m pine.capture check "$F" --out ~/Sync/obsideon/vault/pine_test/btc_1d_report.md
+```
+
+**Intraday stock: `BATS:AAPL`, 1 hour** (regular session: extended hours off on the chart)
+
+```bash
+F=$(ls -t ~/Sync/obsideon/vault/pine_test/BATS_AAPL*60*.csv | head -1); echo "$F"
+```
+
+```bash
+uv run python -m pine.capture manifest "$F" --symbol BATS:AAPL --timeframe 60 --timezone America/New_York
+```
+
+```bash
+uv run python -m pine.capture check "$F" --out ~/Sync/obsideon/vault/pine_test/aapl_60_report.md
+```
+
+If `echo "$F"` prints nothing, the file name differs from the pattern; run
+`ls -t ~/Sync/obsideon/vault/pine_test | head` and use the real name. If the symbol isn't
+available under that exchange prefix in your account, any exchange works; pass the symbol
+exactly as the chart header shows it.

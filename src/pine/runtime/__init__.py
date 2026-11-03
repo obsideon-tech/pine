@@ -163,10 +163,14 @@ class _TA:
 
 
 class Context:
-    def __init__(self, bars: Bars, max_bars_back: int = 5000):
+    def __init__(self, bars: Bars, max_bars_back: int = 5000, bar_offset: int = 0):
         if max_bars_back < 1:
             raise ValueError("max_bars_back must be >= 1")
+        if bar_offset < 0:
+            raise ValueError("bar_offset must be >= 0")
         self.bars = bars
+        self.bar_offset = bar_offset
+        self.strategy = None  # a pine.strategy.Broker when run(..., strategy=...)
         self.max_bars_back = max_bars_back
         mk = lambda: Series(max_bars_back)  # noqa: E731
         self.open, self.high, self.low, self.close = mk(), mk(), mk(), mk()
@@ -201,7 +205,7 @@ class Context:
         self.close._push(b.close[i])
         self.volume._push(b.volume[i])
         self.time._push(b.ts[i])
-        self.bar_index._push(i)
+        self.bar_index._push(self.bar_offset + i)
 
     # -- declarations -----------------------------------------------------------------------
     def series(self, key: str, init=NA) -> Series:
@@ -249,17 +253,41 @@ class Context:
 class RunResult:
     columns: dict[str, np.ndarray]
     bars: Bars
+    broker: object | None = None
+    """The `pine.strategy.Broker` (trades, final state) when run with ``strategy=``."""
 
     def __getitem__(self, name: str) -> np.ndarray:
         return self.columns[name]
 
 
-def run(script: Callable[[Context], None], bars: Bars, max_bars_back: int = 5000) -> RunResult:
-    """Execute ``script`` once per bar; return the plotted columns."""
-    ctx = Context(bars, max_bars_back)
+def run(
+    script: Callable[[Context], None],
+    bars: Bars,
+    max_bars_back: int = 5000,
+    *,
+    strategy=None,
+    bar_offset: int = 0,
+) -> RunResult:
+    """Execute ``script`` once per bar; return the plotted columns.
+
+    ``strategy``: a `pine.strategy.StrategyConfig` to give the script ``ctx.strategy`` (a
+    broker emulator; orders fill around each script execution per the config).
+    ``bar_offset``: true ``bar_index`` of the first bar (exports that start mid-history)."""
+    ctx = Context(bars, max_bars_back, bar_offset)
+    broker = None
+    if strategy is not None:
+        from pine.strategy import Broker
+
+        broker = Broker(strategy)
+        ctx.strategy = broker
+    o, h, lo, c = bars.open, bars.high, bars.low, bars.close
     for i in range(len(bars)):
         ctx._advance(i)
+        if broker is not None:
+            broker._before_script(i, o[i], h[i], lo[i], c[i])
         script(ctx)
+        if broker is not None:
+            broker._after_script(i, c[i])
     for col in ctx._plots.values():
         col.setflags(write=False)
-    return RunResult(dict(ctx._plots), bars)
+    return RunResult(dict(ctx._plots), bars, broker)
