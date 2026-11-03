@@ -1,0 +1,24 @@
+//@version=6
+// Variable tracing (PINE_PLAN.md §10 C1): which variables are traced into request.security.
+indicator("tracing")
+src = close
+a = request.security(syminfo.tickerid, "D", src, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+prev = close[1]
+b = request.security(syminfo.tickerid, "D", prev, lookahead = barmerge.lookahead_on)
+chain = prev * 2 + open[1]
+c = request.security(syminfo.tickerid, "D", chain, lookahead = barmerge.lookahead_on)
+htf = request.security(syminfo.tickerid, "D", prev)
+mid = math.max(close[1], src)
+d = request.security(syminfo.tickerid, "D", mid, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+// Not traced, so only "possible":
+var float held = close
+e = request.security(syminfo.tickerid, "D", held, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+mut = close[1]
+mut := close
+f = request.security(syminfo.tickerid, "D", mut, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+// A parameter shadowing a traced global must not borrow the global's proof:
+shadow = close[1]
+g(shadow) => request.security(syminfo.tickerid, "D", shadow, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+[m1, m2, m3] = ta.macd(close, 12, 26, 9)
+h = request.security(syminfo.tickerid, "D", m1, lookahead = barmerge.lookahead_on)  // expect: security-lookahead-leak
+plot(a + b + c + htf + d + e + f + g(close[1]) + h)

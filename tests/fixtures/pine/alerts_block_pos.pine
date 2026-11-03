@@ -1,0 +1,19 @@
+//@version=6
+// Alert gating is per block (PINE_PLAN.md §10 C2): isconfirmed elsewhere does not gate.
+indicator("alert block positives")
+cross = ta.crossover(close, ta.sma(close, 20))
+confirmed = barstate.isconfirmed
+if cross and confirmed
+    alert("gated")
+if cross
+    alert("not gated, although isconfirmed appears above")  // expect: alert-unconfirmed
+if cross or barstate.isconfirmed
+    alert("or can bypass the gate")  // expect: alert-unconfirmed
+if cross and not barstate.isconfirmed
+    alert("negated")  // expect: alert-unconfirmed
+if cross and barstate.isconfirmed
+    alert("gated")
+else
+    alert("else branch is not gated")  // expect: alert-unconfirmed
+alertcondition(cross, "Cross", "crossed")  // expect: alertcondition-unconfirmed
+alertcondition(cross or confirmed, "Cross2", "crossed")  // expect: alertcondition-unconfirmed

@@ -317,8 +317,8 @@ prove safe" is never reported as "proven unsafe".
 | `varip` | realtime-repaint | warning/definite | any `varip` |
 | `barstate-realtime` | realtime-repaint | warning/possible | `barstate.isrealtime`, `.isnew`, `.islast` |
 | `timenow` | realtime-repaint | warning/possible | `timenow` |
-| `alert-unconfirmed` | realtime-repaint | warning/possible | `alert()` without `freq = alert.freq_once_per_bar_close`, in a script with no `barstate.isconfirmed` |
-| `alertcondition-unconfirmed` | realtime-repaint | info/possible | `alertcondition()` in a script with no `barstate.isconfirmed` |
+| `alert-unconfirmed` | realtime-repaint | warning/possible | `alert()` without `freq = alert.freq_once_per_bar_close` and not inside an `if`/`else if` whose condition provably requires `barstate.isconfirmed` |
+| `alertcondition-unconfirmed` | realtime-repaint | info/possible | `alertcondition()` whose condition does not provably require `barstate.isconfirmed` |
 | `fill-timing` | fill-timing | info/definite | `calc_on_order_fills = true`, `process_orders_on_close = true` |
 | `negative-history-index` | future-leak | error/definite | `x[-n]`, literal `n` |
 | `negative-plot-offset` | display | info/definite | `plot*`/`bgcolor` with literal `offset = -n` |
@@ -330,13 +330,25 @@ series in it carries `[k ≥ 1]` and no user identifier appears outside a second
 argument. It is a *definite leak* when a built-in series is read unoffset outside any
 bare-name call. Everything else is *unproven*. Known error sources:
 
-- **False negative:** a user series passed as a second-or-later call argument
-  (`math.max(close[1], mySeries)`) is assumed to be a parameter such as a length.
-- **False negative:** `alert-unconfirmed` accepts any reference to `barstate.isconfirmed` in
-  the script as a gate, whether or not it gates that alert.
-- **Conservative ("possible"):** user variables are not traced (`src = close` then
-  `request.security(..., src, lookahead_on)`); bare-name calls (`nz(close)`, user functions)
-  may offset internally.
+- **Variable tracing** (since 2026-11-03, §10 C1). Before classification, identifiers that
+  are assigned exactly once with `=` at the top level (indent 0), never reassigned (`:=`,
+  `+=`, …), not `var`/`varip`, not tuple-destructured, not an `if`/`switch` expression and
+  not shadowed by any function parameter are replaced by `(value)`, recursively. So
+  `src = close` → `request.security(..., src, lookahead_on)` is a *definite* leak, and
+  `prev = close[1]` → `..., prev, ...` is *proven* safe. Untraceable variables stay
+  `possible`.
+- **False negative (narrowed):** an *untraceable* user series passed as a second-or-later
+  call argument (`math.max(close[1], heldVar)`) is still assumed to be a parameter. Traceable
+  ones are now expanded and checked (`math.max(close[1], src)` with `src = close` is definite).
+- **Conservative ("possible"):** bare-name calls (`nz(close)`, user functions) may offset
+  internally; untraceable variables (above).
+- **Alert gating** (since 2026-11-03, §10 C2). An `alert()` counts as gated only if an
+  enclosing `if`/`else if` (found by indentation; continuation lines with non-multiple-of-4
+  indent included) has a condition that, with traced variables expanded, contains an
+  un-negated `barstate.isconfirmed` and no `or`/`?` that could bypass it. `else` branches
+  never count. `alertcondition` applies the same test to its condition argument. This closes
+  the earlier false negative where any `isconfirmed` anywhere counted. Limit: gating inside a
+  called function is not seen (reported `possible`).
 - **Conservative:** the timeframe argument is not evaluated, so a variable timeframe that is
   in fact the chart's is still reported by `security-realtime-repaint`.
 
@@ -535,16 +547,12 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Raised:_ 2026-11-03
       - _Why:_ `convergence_bars` covers one filter; RSI/ATR compose filters with windows.
       - _Done when:_ documented bound plus a test like the §5.3 hazard test for RSI.
-- [ ] **[med] C1 — Lint: single-assignment tracing** (§10 C1)
-      - _Raised:_ 2026-11-03
-      - _Why:_ untraced variables are the largest source of `possible` findings.
-      - _Done when:_ `src = close` then `request.security(..., src, lookahead_on)` is
-        `definite`; reassigned variables stay `possible`.
-- [ ] **[med] C2 — Lint: block-aware alert gating** (§10 C2)
-      - _Raised:_ 2026-11-03
-      - _Why:_ closes the documented false negative in `alert-unconfirmed`.
-      - _Done when:_ an `alert()` outside an `isconfirmed`-gated block is reported even when
-        `barstate.isconfirmed` appears elsewhere.
+- [x] **[med] C1 — Lint: single-assignment tracing** (§10 C1) — done 2026-11-03
+      (`pine.lint._scope`; `tracing.pine` covers traced, `var`, reassigned, shadowed-parameter
+      and destructured cases with per-case confidence asserted).
+- [x] **[med] C2 — Lint: block-aware alert gating** (§10 C2) — done 2026-11-03
+      (`alerts_block_pos/neg.pine`: isconfirmed elsewhere, `or`, `not`, `else`, nested,
+      continued and traced conditions).
 - [ ] **[med] C3 — Lint precision/recall on a local corpus** (§10 C3)
       - _Raised:_ 2026-11-03
       - _Why:_ rule quality on real scripts is unknown.
@@ -673,11 +681,12 @@ hazard test does for EMA.
 **C1. Single-assignment tracing.** Resolve identifiers assigned once with `=` and never
 reassigned with `:=`, so `src = close` followed by `request.security(..., src, lookahead_on)`
 becomes `definite`. This removes the largest class of `possible` findings. Reassigned or
-conditionally assigned variables stay `possible`.
+conditionally assigned variables stay `possible`. *Status 2026-11-03: done (§6.3).*
 
 **C2. Block-aware alert gating.** Use indentation to find the `if` enclosing each `alert()`
 and require `barstate.isconfirmed` in that condition (or `freq_once_per_bar_close`). This
 closes the documented false negative where any `isconfirmed` anywhere in the script counts.
+*Status 2026-11-03: done (§6.3).*
 
 **C3. Measured precision and recall.** Run `pine-lint` over 30–50 open-source scripts kept
 locally (never committed; licences vary), hand-label a sample, and record counts in §6.3:

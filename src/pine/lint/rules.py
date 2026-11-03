@@ -13,8 +13,9 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
-from pine.lint._calls import Arg, Call, matching_close
+from pine.lint._calls import Arg, Call, matching_close, render
 from pine.lint._lexer import Comment, Token
+from pine.lint._scope import Scope, enclosing_conditions, expand, is_confirmed_gate
 
 __all__ = ["Finding", "Context", "RuleInfo", "RULES", "Offset", "classify_offset"]
 
@@ -42,6 +43,7 @@ class Context:
     calls: list[Call]
     lines: list[str]
     version: int | None
+    scope: Scope
 
     def names(self) -> set[str]:
         return {t.text for t in self.tokens if t.kind == "name"}
@@ -221,16 +223,20 @@ def _expr(call: Call) -> Arg | None:
 )
 def _security_leak(ctx: Context):
     """Catches lookahead_on with an unoffset expression: on historical bars the value of the
-    higher-timeframe bar is visible before that bar has closed. Misses: lookahead passed via a
-    variable (see security-lookahead-unresolved); user variables are not traced, so those
-    cases are reported as ``possible``."""
+    higher-timeframe bar is visible before that bar has closed. User variables assigned once
+    at the top level are traced (§10 C1); others (``var``, reassigned, local, parameters) are
+    not, and stay ``possible``. Misses: lookahead passed via a variable (see
+    security-lookahead-unresolved)."""
     for c in ctx.calls:
         if c.name not in _SECURITY or _lookahead(c) != "on":
             continue
         e = _expr(c)
-        cls = classify_offset(e.tokens if e else ())
+        raw = e.tokens if e else ()
+        traced = expand(raw, ctx.scope)
+        cls = classify_offset(traced)
         if cls == "proven":
             continue
+        via = f" (traced: `{render(traced)}`)" if traced != raw else ""
         if cls == "definite-leak":
             bare = len(e.tokens) == 1 or (len(e.tokens) == 4 and e.tokens[2].text == "0")
             fix = f"{e.tokens[0].text}[1]" if bare else f"({e.text})[1]"
@@ -240,8 +246,8 @@ def _security_leak(ctx: Context):
                 "error",
                 "definite",
                 c.token,
-                f"lookahead_on with `{e.text}` reads the current bar: future data leaks into "
-                f"historical bars; request `{fix}` instead",
+                f"lookahead_on with `{e.text}`{via} reads the current bar: future data leaks "
+                f"into historical bars; request `{fix}` instead",
             )
         else:
             yield _finding(
@@ -250,8 +256,8 @@ def _security_leak(ctx: Context):
                 "warning",
                 "possible",
                 c.token,
-                f"lookahead_on with `{e.text if e else '?'}`: cannot prove a >= 1 bar offset; "
-                "if it is not offset, this leaks future data on historical bars",
+                f"lookahead_on with `{e.text if e else '?'}`{via}: cannot prove a >= 1 bar "
+                "offset; if it is not offset, this leaks future data on historical bars",
             )
 
 
@@ -295,7 +301,7 @@ def _security_realtime(ctx: Context):
         if tf is not None and tf.text in ("timeframe.period", '""', "''"):
             continue
         e = _expr(c)
-        if classify_offset(e.tokens if e else ()) == "proven":
+        if classify_offset(expand(e.tokens if e else (), ctx.scope)) == "proven":
             continue
         yield _finding(
             ctx,
@@ -436,17 +442,23 @@ def _timenow(ctx: Context):
 
 @_rule("alert-unconfirmed", "realtime-repaint", "alert() may fire on an unconfirmed bar")
 def _alert(ctx: Context):
-    """Catches ``alert()`` without ``freq = alert.freq_once_per_bar_close`` in a script that
-    never references ``barstate.isconfirmed``. The default frequency fires intrabar, on a
-    condition that may be false when the bar closes. Misses: a gate the linter cannot see
-    (e.g. ``barstate.isconfirmed`` used for something else counts as a gate)."""
-    if "barstate.isconfirmed" in ctx.names():
-        return
+    """Catches ``alert()`` without ``freq = alert.freq_once_per_bar_close`` that is not inside
+    an ``if``/``else if`` whose condition provably requires ``barstate.isconfirmed`` (§10 C2):
+    un-negated, no ``or``/``?`` that could bypass it; traced variables are expanded. The
+    default frequency fires intrabar, on a condition that may be false at bar close.
+    Misses/limits: gating inside a called function is not seen (reported ``possible``);
+    an ``else`` branch never counts as gated."""
     for c in ctx.calls:
         if c.name != "alert":
             continue
         f = c.arg("freq", 1)
         if f is not None and f.text == "alert.freq_once_per_bar_close":
+            continue
+        gated = any(
+            kind == "if" and is_confirmed_gate(cond, ctx.scope)
+            for kind, cond in enclosing_conditions(ctx.scope, c.token.line)
+        )
+        if gated:
             continue
         yield _finding(
             ctx,
@@ -455,32 +467,35 @@ def _alert(ctx: Context):
             "possible",
             c.token,
             "alert() can fire intrabar on a condition that is false at bar close; use "
-            "freq = alert.freq_once_per_bar_close or gate with barstate.isconfirmed",
+            "freq = alert.freq_once_per_bar_close or put it inside "
+            "`if ... and barstate.isconfirmed`",
         )
 
 
 @_rule(
     "alertcondition-unconfirmed",
     "realtime-repaint",
-    "alertcondition() without barstate.isconfirmed",
+    "alertcondition() whose condition does not require barstate.isconfirmed",
 )
 def _alertcondition(ctx: Context):
-    """Catches ``alertcondition()`` in a script with no ``barstate.isconfirmed``. Whether it
-    repaints depends on the frequency chosen in the alert dialog, which the script cannot
-    see; hence ``info``."""
-    if "barstate.isconfirmed" in ctx.names():
-        return
+    """Catches ``alertcondition()`` whose condition argument (traced) does not provably
+    require ``barstate.isconfirmed``. Whether it repaints also depends on the frequency
+    chosen in the alert dialog, which the script cannot see; hence ``info``."""
     for c in ctx.calls:
-        if c.name == "alertcondition":
-            yield _finding(
-                ctx,
-                "alertcondition-unconfirmed",
-                "info",
-                "possible",
-                c.token,
-                "set the alert to 'Once Per Bar Close', or gate the condition with "
-                "barstate.isconfirmed",
-            )
+        if c.name != "alertcondition":
+            continue
+        cond = c.arg("condition", 0)
+        if cond is not None and is_confirmed_gate(cond.tokens, ctx.scope):
+            continue
+        yield _finding(
+            ctx,
+            "alertcondition-unconfirmed",
+            "info",
+            "possible",
+            c.token,
+            "set the alert to 'Once Per Bar Close', or include `and barstate.isconfirmed` in "
+            "the condition",
+        )
 
 
 # ---------------------------------------------------------------- history and display

@@ -47,7 +47,10 @@ def test_confidence_definite_vs_possible():
     r = lint_file(FIXTURES / "security_lookahead_pos.pine")
     by_line = {f.line: f for f in r.findings}
     assert (by_line[3].severity, by_line[3].confidence) == ("error", "definite")
-    assert (by_line[7].severity, by_line[7].confidence) == ("warning", "possible")  # src
+    # src = close is traced (single top-level assignment), so this is now definite (§10 C1).
+    assert (by_line[7].severity, by_line[7].confidence) == ("error", "definite")
+    assert "traced: `(close)`" in by_line[7].message
+    assert (by_line[9].severity, by_line[9].confidence) == ("error", "definite")  # close[1]+src
     assert (by_line[8].severity, by_line[8].confidence) == ("error", "definite")  # ta.sma(close)
     assert "request `(ta.sma(close, 20))[1]`" in by_line[8].message
     assert all(f.category == "future-leak" for f in r.findings)
@@ -108,3 +111,35 @@ def test_text_and_json_outputs_carry_disclaimer():
         "message",
         "snippet",
     }
+
+
+def test_tracing_confidence_per_case():
+    r = lint_file(FIXTURES / "tracing.pine")
+    conf = {f.line: f.confidence for f in r.findings}
+    assert conf == {
+        5: "definite",  # src = close
+        12: "definite",  # math.max(close[1], src): src traced into a later argument
+        15: "possible",  # var: persistent, not traced
+        18: "possible",  # reassigned with :=
+        21: "possible",  # parameter shadows a traced global
+        23: "possible",  # tuple destructuring
+    }
+
+
+def test_scope_bindings_rules():
+    from pine.lint._lexer import tokenize
+    from pine.lint._scope import build_scope
+
+    src = (
+        "a = close\n"
+        "b = 1\nb := 2\n"
+        "var c = close\n"
+        "if true\n    d = close\n"
+        "e = f(\n     close)\n"
+        "for i = 0 to 3\n    na\n"
+        "x = if true\n    1\nelse\n    2\n"
+    )
+    toks, _ = tokenize(src)
+    scope = build_scope(toks, src.splitlines())
+    assert set(scope.bindings) == {"a", "e"}
+    assert [t.text for t in scope.bindings["e"]] == ["f", "(", "close", ")"]

@@ -1,0 +1,18 @@
+//@version=6
+indicator("alert block negatives")
+cross = ta.crossover(close, ta.sma(close, 20))
+confirmedCross = cross and barstate.isconfirmed
+if confirmedCross
+    alert("gated through a traced variable")
+if barstate.isconfirmed
+    if cross
+        alert("gated by the outer block")
+if cross and
+     barstate.isconfirmed
+    alert("gated by a continued condition")
+if not cross
+    na
+else if cross and barstate.isconfirmed
+    alert("gated by else if")
+alertcondition(confirmedCross, "Cross", "crossed")
+alertcondition(cross and barstate.isconfirmed, "Cross2", "crossed")
