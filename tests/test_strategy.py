@@ -207,7 +207,13 @@ def _export(bars, cfg, tmp_path, k=0):
     return load_tradingview_csv(path, timeframe="1D")
 
 
-@pytest.mark.parametrize("group", [g for g in GROUPS if len(GROUPS[g]) > 1])
+# path_basis only differs on a bracket bar whose *rounded* high/low are symmetric around the
+# open while the raw ones are not: too rare on this synthetic series. Its hypotheses are shown
+# to differ by test_doge_row_231_path_judged_on_raw_prices instead.
+RARE = {"path_basis"}
+
+
+@pytest.mark.parametrize("group", [g for g in GROUPS if len(GROUPS[g]) > 1 and g not in RARE])
 def test_each_rule_is_decided_and_alternatives_detected(group, tmp_path):
     bars = _long_bars()
     tick = 0.05 if group in _NEEDS_MINTICK else None
@@ -299,3 +305,27 @@ def test_na_strategy_bar_index_elsewhere_is_still_an_error(tmp_path):
     cols["strat_bar_index"][100] = np.nan
     with pytest.raises(ValueError, match="strat_bar_index: na at row 100"):
         decide(TradingViewExport(exp.bars, cols, exp.header, exp.time_format))
+
+
+@pytest.mark.parametrize(
+    "price, rounded",
+    [(0.002695, 0.00269), (0.002665, 0.00266), (0.0026055, 0.00261), (0.0038741, 0.00387)],
+)
+def test_tick_rounding_matches_tradingview_float_behaviour(price, rounded):
+    """DOGE rows 44 and 133: decimal ties sit just below .5 in binary and round down."""
+    from pine.strategy import Broker
+
+    assert Broker(StrategyConfig(mintick=0.00001))._round(price) == rounded
+
+
+def test_doge_row_231_path_judged_on_raw_prices():
+    """Rounded bar symmetric around the open (0.00271 / 0.00259 vs 0.00265); on raw prices the
+    low is nearer, and TradingView hit the stop (net -0.00003)."""
+    rows = [(0.002653,) * 4, (0.00265, 0.002712, 0.0025891, 0.0026481)]
+    args = {0: bracket(0.002653 * 0.99, 0.002653 * 1.01)}
+    _, b = run_orders(rows, args, StrategyConfig(mintick=0.00001))
+    assert b.trades[0].exit_price == 0.00262 and b.trades[0].profit == pytest.approx(
+        -0.00003, abs=1e-15
+    )
+    _, alt = run_orders(rows, args, StrategyConfig(mintick=0.00001, path_basis="rounded"))
+    assert alt.trades[0].exit_price == 0.00268  # ties go high first on the rounded bar

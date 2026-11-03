@@ -53,8 +53,9 @@ GROUPS: dict[str, dict[str, StrategyConfig]] = {
         "conservative": EXPECTED,
         "nearest": replace(EXPECTED, order_rounding="nearest"),
     },
+    "path_basis": {"raw": EXPECTED, "rounded": replace(EXPECTED, path_basis="rounded")},
 }
-_NEEDS_MINTICK = ("price_rounding", "order_rounding")
+_NEEDS_MINTICK = ("price_rounding", "order_rounding", "path_basis")
 OPTIONAL_COLUMNS = ("strat_mintick",)
 EXPECTED_HYP = {
     "baseline": "expected",
@@ -64,6 +65,7 @@ EXPECTED_HYP = {
     "exit_same_bar": "yes",
     "price_rounding": "tick",
     "order_rounding": "conservative",
+    "path_basis": "raw",
 }
 
 

@@ -1153,8 +1153,15 @@ with `fill_timing = next_open`. Also observed: a strategy is not calculated on t
 until it closes (all strategy columns `na` on the last row). Changes: `StrategyConfig.mintick`
 with `price_rounding` / `order_rounding` rules (new probe groups), `strat_mintick` plotted by
 the capture script, `--mintick` for exports without it; the four rows above are regression
-tests. **Pending:** a re-check of the same export with `--mintick 0.00001` to confirm the whole
-trajectory and decide the original four rules.
+tests.
+
+**Re-check with `--mintick 0.00001`:** position size and closed-trade count then matched over
+the whole 2 678-bar history. Remaining price differences traced to two causes, both fixed:
+decimal ties round *down* in TradingView because it rounds in binary floating point
+(0.002695 → 0.00269, 0.002665 → 0.00266; rows 44, 133), and the intrabar path is judged on the
+raw bar (row 231: rounded bar symmetric around the open, raw low nearer, TradingView hit the
+stop). Both are regression tests; `path_basis` is a new probe group. **Pending:** another
+re-check of the same export.
 
 ## 13. Strategy parity (`strategy.*`)
 
@@ -1180,6 +1187,10 @@ properties). Each fill rule is a probed hypothesis, as for the execution model (
 | exit on the entry bar | `yes`: a bracket can fill on the bar its entry filled | `no` | same-bar exits |
 | price rounding | `tick`: OHLC rounded to the nearest `syminfo.mintick`; market orders fill at the rounded open | `none` | **observed** (DOGE 1D): every fill price |
 | order-price rounding | `conservative`: sell limit / buy stop rounded up, buy limit / sell stop down | `nearest` | observed once for a sell limit; stops by symmetry |
+| path basis | `raw`: which extreme is nearer the open is judged on the unrounded bar; levels are checked on the rounded one | `rounded` (ties high first) | observed once (DOGE row 231) |
+
+Tick rounding is plain float `floor(price / mintick + 0.5)`: a decimal tie such as 0.002695 is
+269.49999999999994 ticks in binary and rounds *down* (observed, DOGE rows 44 and 133).
 
 The first four expectations are **unverified**; the rounding rules come from the first
 strategy export (§12). `tools/capture_strategy.pine` is a deterministic
