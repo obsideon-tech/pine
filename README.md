@@ -62,8 +62,9 @@ be proven (`possible`). Rules and their known blind spots are in
 `pine.strategy` emulates TradingView's backtest engine for ports written on `pine.runtime`
 (`run(script, bars, strategy=StrategyConfig())`, then `ctx.strategy.entry/close/exit` and
 `position_size`, `netprofit`, `equity`, …). First increment: market orders, reversals and
-stop/limit brackets with TradingView's intrabar path assumption; checked against TradingView by
-`tools/capture_strategy.pine` (pending an export). Plan: [`PINE_PLAN.md` §13](PINE_PLAN.md#13-strategy-parity-strategy).
+stop/limit brackets with TradingView's intrabar path assumption and tick rounding, **verified
+bar for bar against TradingView** on a 2 678-bar DOGE backtest (`tools/capture_strategy.pine`);
+gap fills still to observe. Plan: [`PINE_PLAN.md` §13](PINE_PLAN.md#13-strategy-parity-strategy).
 
 ### Run the TradingView capture
 

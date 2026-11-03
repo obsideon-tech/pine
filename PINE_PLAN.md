@@ -687,7 +687,9 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         feed difference is documented and an exported HTF series can be supplied as input.
 - [x] **[low] I — Decide whether strategy (`strategy.*`) parity is in scope** (§11 I) — owner
       decided 2026-11-03: in scope. See §13.
-- [ ] **[high] S1 — Broker emulator, first increment, verified by export** (§13)
+- [x] **[high] S1 — Broker emulator, first increment, verified by export** (§13) — **passed
+      2026-11-03** on BINANCE:DOGEUSDT 1D (all 2 678 bars, §12); `gap_fill` and stop-price
+      rounding still to observe on an equity export with gaps.
       - _Raised:_ 2026-11-03
       - _Why:_ strategy results (positions, P&L, equity) must match TradingView bar for bar.
       - _Done when:_ an export of `tools/capture_strategy.pine` decides every S1 rule and the
@@ -1160,8 +1162,16 @@ the whole 2 678-bar history. Remaining price differences traced to two causes, b
 decimal ties round *down* in TradingView because it rounds in binary floating point
 (0.002695 → 0.00269, 0.002665 → 0.00266; rows 44, 133), and the intrabar path is judged on the
 raw bar (row 231: rounded bar symmetric around the open, raw low nearer, TradingView hit the
-stop). Both are regression tests; `path_basis` is a new probe group. **Pending:** another
-re-check of the same export.
+stop). Both are regression tests; `path_basis` is a new probe group.
+
+**Final re-check (same export, `--mintick 0.00001`): Overall PASS.** The emulator reproduces
+TradingView's strategy state on every one of 2 678 bars — position size, average price, open
+and net profit, equity, closed-trade count — with every fill exact to the tick. Rules decided:
+`fill_timing = next_open`, `path = nearest_extreme_first`, `exit_same_bar = yes`,
+`price_rounding = tick`, `order_rounding = conservative` (sell limit observed; stops still by
+symmetry), `path_basis = raw`. **Not decidable here:** `gap_fill` — on a 24/7 crypto series the
+open equals the previous close, so no gap ever jumped a bracket level; needs an equity export
+(e.g. NFLX 1D) with the strategy script.
 
 ## 13. Strategy parity (`strategy.*`)
 
@@ -1209,7 +1219,7 @@ every rule's hypotheses are distinguishable and each is recovered from an export
 
 | Step | Adds | Status |
 |---|---|---|
-| S1 | market entries/closes/reversals, stop/limit brackets, fixed qty, no costs, pyramiding 1 | built; export pending |
+| S1 | market entries/closes/reversals, stop/limit brackets, fixed qty, no costs, pyramiding 1, tick rounding | **verified** (DOGE 1D, all bars); `gap_fill` pending an equity export |
 | S2 | commission (percent / per contract), slippage (ticks), qty types (percent of equity, cash), pyramiding > 1, `strategy.order`, trailing stops (`trail_points`/`trail_offset`) | — |
 | S3 | `process_orders_on_close`, `calc_on_order_fills`, margin calls, `strategy.risk.*` | — |
 | S4 | trade-list comparison (List of Trades export), strategy reports (max drawdown, profit factor) | — |
