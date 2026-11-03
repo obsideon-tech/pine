@@ -108,7 +108,7 @@ def _columns(export: TradingViewExport, cfg: StrategyConfig, k: int) -> dict[str
 
 
 def decide(export: TradingViewExport) -> list[StrategyDecision]:
-    k = bar_offset({"bar_index": export.columns["strat_bar_index"]}) or 0
+    k = bar_offset(export.columns, "strat_bar_index") or 0
     n = len(export.bars)
     cycle = int(CONSTANTS["CYCLE"])
     sync = 0 if k == 0 else (cycle - 1 - k) % cycle  # first row at phase 39 (flat)

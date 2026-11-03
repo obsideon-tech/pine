@@ -101,27 +101,38 @@ def write_manifest(
 
 def run_checks(exp, inputs_rounded: bool = False) -> dict:
     """Run every check the export supports. Returns a dict with per-check results."""
-    result: dict = {"reference": None, "semantics": None, "strategy": None, "skipped": []}
+    result: dict = {
+        "reference": None, "semantics": None, "strategy": None, "skipped": [], "errors": [],
+    }  # fmt: skip
     if _present(exp, reference.PLOT_TITLES):
         delta = reference.ohlc_rounding(exp) if inputs_rounded else None
-        rep = reference.check_capture(exp, input_rounding=delta)
-        na = reference.decide_na_policy(exp, input_rounding=delta)
-        result["reference"] = (rep, na)
+        try:
+            rep = reference.check_capture(exp, input_rounding=delta)
+            na = reference.decide_na_policy(exp, input_rounding=delta)
+            result["reference"] = (rep, na)
+        except ValueError as exc:
+            result["errors"].append(f"reference: {exc}")
     else:
         result["skipped"].append("reference (tools/reference_capture.pine not in the export)")
     if _present(exp, semantics.COLUMNS):
-        result["semantics"] = semantics.decide(exp)
+        try:
+            result["semantics"] = semantics.decide(exp)
+        except ValueError as exc:
+            result["errors"].append(f"semantics: {exc}")
     else:
         result["skipped"].append("semantics (tools/capture_semantics.pine not in the export)")
     if _present(exp, strategy_capture.COLUMNS):
-        result["strategy"] = strategy_capture.decide(exp)
+        try:
+            result["strategy"] = strategy_capture.decide(exp)
+        except ValueError as exc:
+            result["errors"].append(f"strategy: {exc}")
     else:
         result["skipped"].append("strategy (tools/capture_strategy.pine not in the export)")
     return result
 
 
 def _passed(result: dict) -> bool:
-    ok = True
+    ok = not result.get("errors")
     if result["reference"]:
         rep, na = result["reference"]
         ok &= rep.passed and all(d.decided for d in na)
@@ -149,13 +160,28 @@ def _markdown(csv: Path, manifest, result: dict) -> str:
         out.append(semantics._summary(result["semantics"]))
     if result["strategy"]:
         out.append(strategy_capture.summary(result["strategy"]))
+    if result.get("errors"):
+        out += [
+            "## Could not run",
+            "",
+            *(f"- {e}" for e in result["errors"]),
+            "",
+            "A check above could not run on this export; the others did. See docs/CAPTURE.md "
+            "troubleshooting.",
+            "",
+        ]
     if result["skipped"]:
         out += ["## Skipped", "", *(f"- {s}" for s in result["skipped"]), ""]
     return "\n".join(out)
 
 
 def _json(csv: Path, result: dict) -> str:
-    payload: dict = {"export": csv.name, "passed": _passed(result), "skipped": result["skipped"]}
+    payload: dict = {
+        "export": csv.name,
+        "passed": _passed(result),
+        "skipped": result["skipped"],
+        "errors": result.get("errors", []),
+    }
     if result["reference"]:
         rep, na = result["reference"]
         payload["reference"] = {
@@ -228,7 +254,9 @@ def main(argv: list[str] | None = None) -> int:
             manifest = csv.with_suffix(".yaml")
         exp, man = load_export(csv, manifest, args.timeframe, args.tz)
         result = run_checks(exp, inputs_rounded=args.inputs_rounded)
-        if all(result[k] is None for k in ("reference", "semantics", "strategy")):
+        if not result["errors"] and all(
+            result[k] is None for k in ("reference", "semantics", "strategy")
+        ):
             raise InputError(
                 f"{csv} contains neither capture script's columns; see docs/CAPTURE.md step 2"
             )

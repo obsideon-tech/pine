@@ -131,6 +131,7 @@ report. Things to know:
 | `src_na` fails | The gap pattern doesn't line up with the exported `bar_index`. Send the report: either rows are missing in the middle of the export or the script was edited. (A late start alone is handled.) |
 | `varip_acc` differs only on the last row | The last bar was live (24/7 markets, or a session still open); `varip` keeps intrabar ticks there. Handled: the checker excludes that row and says so. |
 | No "Strategy" section and no "Skipped" line about it | Your checkout predates the strategy checker: `git pull` (after the PR adding it is merged). The strategy script also has to be on the chart when you export. |
+| `strat_bar_index: …` under "Could not run" | The strategy script's bar-number column has `na` or gaps (the message names the first row). Usually the strategy wasn't calculated on every bar (e.g. it errored or was added after a partial load). Remove and re-add the strategy, let the chart finish loading, re-export. The other checks still ran. |
 | `bar_index column is not consecutive` | Rows are missing or reordered in the CSV. Re-export without editing the file. |
 | `timeframe '1h' is not a Pine timeframe string` | Use Pine spelling: `60` rather than `1h`, `1D` rather than `D1`. |
 
