@@ -46,13 +46,24 @@ GROUPS: dict[str, dict[str, StrategyConfig]] = {
     },
     "gap_fill": {"open": EXPECTED, "order_price": replace(EXPECTED, gap_fill="order_price")},
     "exit_same_bar": {"yes": EXPECTED, "no": replace(EXPECTED, exit_same_bar=False)},
+    # Tick rounding: only meaningful when the symbol's mintick is known (strat_mintick column
+    # or --mintick); otherwise these groups are skipped.
+    "price_rounding": {"tick": EXPECTED, "none": replace(EXPECTED, price_rounding="none")},
+    "order_rounding": {
+        "conservative": EXPECTED,
+        "nearest": replace(EXPECTED, order_rounding="nearest"),
+    },
 }
+_NEEDS_MINTICK = ("price_rounding", "order_rounding")
+OPTIONAL_COLUMNS = ("strat_mintick",)
 EXPECTED_HYP = {
     "baseline": "expected",
     "fill_timing": "next_open",
     "path": "nearest_extreme_first",
     "gap_fill": "open",
     "exit_same_bar": "yes",
+    "price_rounding": "tick",
+    "order_rounding": "conservative",
 }
 
 
@@ -94,6 +105,7 @@ class StrategyDecision:
     reports: dict[str, ParityReport]
     sync_row: int
     dropped_live_bar: bool = False
+    mintick: float | None = None
 
     @property
     def undecided(self) -> bool:
@@ -123,17 +135,36 @@ def _drop_live_bar(export: TradingViewExport) -> tuple[TradingViewExport, bool]:
     return replace(export, bars=bars, columns=cols), True
 
 
-def decide(export: TradingViewExport) -> list[StrategyDecision]:
+def resolve_mintick(export: TradingViewExport, mintick: float | None = None) -> float | None:
+    """The symbol's tick size: explicit argument, else the exported ``strat_mintick`` column."""
+    if mintick is not None:
+        return float(mintick)
+    col = export.columns.get("strat_mintick")
+    if col is None:
+        return None
+    vals = np.asarray(col, dtype=float)
+    vals = vals[~np.isnan(vals)]
+    return float(vals[0]) if vals.size else None
+
+
+def decide(export: TradingViewExport, mintick: float | None = None) -> list[StrategyDecision]:
+    """Decide each broker rule. ``mintick``: the symbol's tick size if the export lacks the
+    ``strat_mintick`` column; without it the tick-rounding groups are skipped and the other
+    groups run with rounding off (they will then fail on symbols whose prices have more
+    decimals than their tick, as TradingView rounds)."""
     export, dropped = _drop_live_bar(export)
+    mintick = resolve_mintick(export, mintick)
     k = bar_offset(export.columns, "strat_bar_index") or 0
     n = len(export.bars)
     cycle = int(CONSTANTS["CYCLE"])
     sync = 0 if k == 0 else (cycle - 1 - k) % cycle  # first row at phase 39 (flat)
     out = []
     for group, hyps in GROUPS.items():
+        if mintick is None and group in _NEEDS_MINTICK:
+            continue
         reports = {}
         for name, cfg in hyps.items():
-            cols = _columns(export, cfg, k)
+            cols = _columns(export, replace(cfg, mintick=mintick), k)
             if sync:
                 for c in _CUMULATIVE:
                     cols[c] = cols[c] - cols[c][sync] + export.columns[c][sync]
@@ -149,7 +180,9 @@ def decide(export: TradingViewExport) -> list[StrategyDecision]:
             }
             reports[name] = check_export(export, specs)
         matching = tuple(h for h, r in reports.items() if r.passed)
-        out.append(StrategyDecision(group, EXPECTED_HYP[group], matching, reports, sync, dropped))
+        out.append(
+            StrategyDecision(group, EXPECTED_HYP[group], matching, reports, sync, dropped, mintick)
+        )
     return out
 
 
@@ -181,6 +214,12 @@ def summary(decisions: list[StrategyDecision]) -> str:
     if sync:
         lines += ["", f"Export starts mid-history: compared from row {sync} (first flat bar); "
                   "cumulative columns anchored there."]  # fmt: skip
+    if decisions and decisions[0].mintick is None:
+        lines += ["", "Tick size unknown: rounding rules not tested and rounding left off. "
+                  "Pass `--mintick` (the symbol's tick, e.g. 0.00001) or re-export with the "
+                  "current capture_strategy.pine, which plots it."]  # fmt: skip
+    elif decisions:
+        lines += ["", f"Tick size used: {decisions[0].mintick:g}."]
     if decisions and decisions[0].dropped_live_bar:
         lines += ["", "Last row dropped: the last bar was live and a strategy calculates only on "
                   "bar close, so its columns were empty there."]  # fmt: skip

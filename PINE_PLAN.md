@@ -1135,6 +1135,27 @@ eleven built-ins, `na` handling, execution model and scalar rules are verified a
 sessions as a *feature* (AAPL hourly only shows that session bars don't break anything), and
 `request.security`.
 
+### 2026-11-03 — first strategy export (BINANCE:DOGEUSDT 1D, from bar 0)
+
+The strategy section failed under every original fill-rule hypothesis, but the per-bar values
+pinned down why: **TradingView's broker emulator works on prices rounded to the symbol's tick**
+(`syminfo.mintick` = 0.00001 here) although the historical OHLC carry 7 decimals.
+
+| Row | Raw | TradingView | Explained by |
+|---|---|---|---|
+| 1 (entry) | open 0.0038741 | avg price 0.00387 | market fill at the open rounded to the nearest tick |
+| 9 (exit) | open 0.0032474 | net −0.00062 = 0.00325 − 0.00387 | same |
+| 31 (bracket) | limit 0.0029222 × 1.01 = 0.0029514 | +0.00004 from entry 0.00292 → exit 0.00296 | sell-limit price rounded *up* |
+| 471 (bracket) | high 0.0026055 < limit 0.0026092 | exits on that bar, +0.00003 | high rounded to 0.00261 ≥ limit rounded to 0.00261 |
+
+Position timing matched for 470 bars before the first rounding-driven divergence, consistent
+with `fill_timing = next_open`. Also observed: a strategy is not calculated on the live bar
+until it closes (all strategy columns `na` on the last row). Changes: `StrategyConfig.mintick`
+with `price_rounding` / `order_rounding` rules (new probe groups), `strat_mintick` plotted by
+the capture script, `--mintick` for exports without it; the four rows above are regression
+tests. **Pending:** a re-check of the same export with `--mintick 0.00001` to confirm the whole
+trajectory and decide the original four rules.
+
 ## 13. Strategy parity (`strategy.*`)
 
 Decided in scope on 2026-11-03 (§11 I). Goal: a Python port of a Pine strategy reproduces
@@ -1157,8 +1178,11 @@ properties). Each fill rule is a probed hypothesis, as for the execution model (
 | intrabar path | `nearest_extreme_first`: open → nearer extreme → other extreme → close (ties: high first) | `high_first` | which of stop/limit fills when both are inside a bar |
 | gap fill | `open`: a level already passed at the open fills at the open | `order_price` | stops through gaps |
 | exit on the entry bar | `yes`: a bracket can fill on the bar its entry filled | `no` | same-bar exits |
+| price rounding | `tick`: OHLC rounded to the nearest `syminfo.mintick`; market orders fill at the rounded open | `none` | **observed** (DOGE 1D): every fill price |
+| order-price rounding | `conservative`: sell limit / buy stop rounded up, buy limit / sell stop down | `nearest` | observed once for a sell limit; stops by symmetry |
 
-All four expectations are **unverified**. `tools/capture_strategy.pine` is a deterministic
+The first four expectations are **unverified**; the rounding rules come from the first
+strategy export (§12). `tools/capture_strategy.pine` is a deterministic
 40-bar cycle (signals from `bar_index` only): long entry, close, short entry, a reversal to
 long, close-all, and a long with a ±1 % stop/limit bracket. `python -m pine.capture check`
 compares its six plotted columns with the emulator under each hypothesis (`pine.strategy_capture`).

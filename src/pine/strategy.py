@@ -20,6 +20,14 @@ exported and checked with ``python -m pine.capture check``):
   open. Alternative: ``"order_price"``.
 - ``exit_same_bar=True``: a bracket can fill on the bar where its entry filled (after the
   open). Alternative: ``False`` (active from the next bar).
+- ``price_rounding="tick"`` (with ``mintick`` set): the emulator works on OHLC rounded to the
+  nearest tick, so market orders fill at the rounded open. Alternative: ``"none"``.
+  **Observed** on BINANCE:DOGEUSDT 1D (2026-11-03): fills at 0.00387 for an open of 0.0038741
+  with mintick 0.00001; an exit only reachable through the rounded high.
+- ``order_rounding="conservative"`` (with ``mintick``): limit and stop prices are rounded to
+  the tick away from a better fill — sell limit / buy stop up, buy limit / sell stop down.
+  Alternative: ``"nearest"``. Observed once (a sell limit 0.0029514 filled at 0.00296); the
+  stop direction is inferred by symmetry, **unverified**.
 
 A ``strategy.entry`` in the direction opposite to the open position closes it and opens the
 new one at the same fill (a reversal). ``P&L = (exit - entry) * qty`` for longs (point value 1).
@@ -45,6 +53,13 @@ class StrategyConfig:
     path: Literal["nearest_extreme_first", "high_first"] = "nearest_extreme_first"
     gap_fill: Literal["open", "order_price"] = "open"
     exit_same_bar: bool = True
+    mintick: float | None = None
+    price_rounding: Literal["tick", "none"] = "tick"
+    order_rounding: Literal["conservative", "nearest"] = "conservative"
+
+    def __post_init__(self) -> None:
+        if self.mintick is not None and not self.mintick > 0:
+            raise ValueError("mintick must be positive")
 
 
 @dataclass(frozen=True)
@@ -157,6 +172,34 @@ class Broker:
         for o in orders:
             self._fill(o, bar, price)
 
+    def _round(self, x: float, mode: str = "nearest") -> float:
+        t = self.config.mintick
+        if t is None or math.isnan(x):
+            return x
+        k = x / t
+        if mode == "nearest":
+            n = math.floor(k + 0.5 + 1e-9)
+        elif mode == "up":
+            n = math.ceil(k - 1e-9)
+        else:
+            n = math.floor(k + 1e-9)
+        inv = 1.0 / t
+        # Divide by an exact integer scale when the tick is 10^-d, so 0.00387 prints as such.
+        return n / round(inv) if abs(inv - round(inv)) < 1e-9 * inv else n * t
+
+    def _price(self, x: float) -> float:
+        return self._round(x) if self.config.price_rounding == "tick" else x
+
+    def _order_level(self, level: float, kind: str, long_position: bool) -> float:
+        """Rounded limit/stop price for an exit of a long (sell) or short (buy) position."""
+        if self.config.mintick is None or math.isnan(level):
+            return level
+        if self.config.order_rounding == "nearest":
+            return self._round(level)
+        sell = long_position
+        up = (kind == "limit" and sell) or (kind == "stop" and not sell)
+        return self._round(level, "up" if up else "down")
+
     def _path(self, o: float, h: float, lo: float, c: float) -> list[float]:
         if self.config.path == "high_first" or abs(h - o) <= abs(o - lo):
             return [o, h, lo, c]
@@ -168,10 +211,19 @@ class Broker:
             return
         if not self.config.exit_same_bar and bar == self.entry_bar:
             return
-        live = [b for b in self._brackets.values() if b.from_entry == self.entry_id]
+        long = self.size > 0
+        live = [
+            _Bracket(
+                b.exit_id,
+                b.from_entry,
+                self._order_level(b.stop, "stop", long),
+                self._order_level(b.limit, "limit", long),
+            )
+            for b in self._brackets.values()
+            if b.from_entry == self.entry_id
+        ]
         if not live:
             return
-        long = self.size > 0
         gap = self.config.gap_fill == "open"
 
         def stop_hit(p: float, s: float) -> bool:
@@ -205,6 +257,7 @@ class Broker:
 
     # Called by pine.runtime.run around each script execution.
     def _before_script(self, bar: int, o: float, h: float, lo: float, c: float) -> None:
+        o, h, lo, c = (self._price(v) for v in (o, h, lo, c))
         self._bar, self._close = bar, c
         if self.config.fill_timing == "next_open":
             self._fill_pending(bar, o)
@@ -212,4 +265,4 @@ class Broker:
 
     def _after_script(self, bar: int, c: float) -> None:
         if self.config.fill_timing == "same_close":
-            self._fill_pending(bar, c)
+            self._fill_pending(bar, self._price(c))

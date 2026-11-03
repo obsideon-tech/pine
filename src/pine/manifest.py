@@ -58,7 +58,7 @@ _REQUIRED = (
     "displayed_precision",
     "indicator",
 )
-_OPTIONAL = ("symbol", "notes")
+_OPTIONAL = ("symbol", "notes", "mintick")
 
 
 class ManifestError(ValueError):
@@ -85,6 +85,8 @@ class Manifest:
     indicator: dict[str, Any] | None
     symbol: str | None = None
     notes: str | None = None
+    mintick: float | None = None
+    """Symbol tick size (``syminfo.mintick``); used by the strategy check (§13)."""
 
 
 def validate_manifest(data: Any, where: str = "<manifest>") -> Manifest:
@@ -134,6 +136,12 @@ def validate_manifest(data: Any, where: str = "<manifest>") -> Manifest:
                 problems.append("displayed_precision is required for a TradingView export")
         elif not (isinstance(p, int) and not isinstance(p, bool) and p >= 0):
             problems.append(f"displayed_precision = {p!r}; expected a non-negative integer")
+
+    mt = data.get("mintick")
+    if mt is not None and not (
+        isinstance(mt, (int, float)) and not isinstance(mt, bool) and mt > 0
+    ):
+        problems.append(f"mintick = {mt!r}; expected a positive number or null")
 
     ind = data.get("indicator")
     if "indicator" in data and ind is not None:
