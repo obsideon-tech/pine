@@ -90,7 +90,7 @@ def rsi_truncation_error(
     source: ArrayLike,
     length: int,
     max_change: float | None = None,
-    na_policy: ta.NaPolicy = "propagate",
+    na_policy: ta.NaPolicy | None = None,
 ) -> np.ndarray:
     """Per-bar bound on ``|RSI_py - RSI_pine|`` when Python's history is a suffix of Pine's.
 
@@ -126,7 +126,7 @@ def rsi_convergence_bars(
     length: int,
     tol: float,
     max_change: float | None = None,
-    na_policy: ta.NaPolicy = "propagate",
+    na_policy: ta.NaPolicy | None = None,
 ) -> int:
     """Bars to exclude so the RSI truncation bound is ``<= tol`` for every later bar.
 

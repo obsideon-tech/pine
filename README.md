@@ -104,12 +104,14 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 ## Known gaps
 
 - **External verification has started, not finished.** One TradingView export (NFLX daily,
-  2026-11-03) confirmed `sma`, `stdev`, `highest`, `lowest`, `tr`, `crossover`/`crossunder` and
-  four scalar rules, and refuted the assumed `math.round` tie rule (now fixed). Everything else
-  awaits a re-run with the offset-aware checker; see [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
-- **`na` inside windows** may be handled differently by TradingView. Three hypotheses are
-  implemented (`na_policy`); the default `propagate` is unconfirmed until a capture export
-  decides. Gap-free data is unaffected.
+  2026-11-03) matched every core built-in after warm-up, confirmed the runtime's execution
+  model and scalar rules, decided how built-ins treat `na`, and corrected `math.round`. Not yet
+  verified: seeding of EMA/RMA/ATR/RSI (that export started mid-history) and the rest of the
+  coverage matrix. See [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
+- **`na` inside windows** follows the observed behaviour by default: `sma`, `stdev`,
+  `highest`, `lowest` skip `na`; `ema`, `rma`, `rsi` carry state across `na` and output `na`
+  on the `na` bar (`pine.ta.DEFAULT_NA_POLICY`; override with `na_policy=`). Observed on one
+  export so far.
 - **Rounded inputs** are accounted for only when asked (`input_rounding=` / `--inputs-rounded`):
   the allowance is provably sufficient but widens tolerances, so it is off by default.
 - **Lint** traces only simple variables (assigned once at the top level) and sees alert gating
@@ -118,8 +120,8 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
   `--format json`); HTML is deferred.
 
 - **Complex indicators are not yet supported with a parity guarantee.** `pine.runtime` now
-  provides Pine's bar-by-bar execution model and scalar rules, but those semantics are
-  *expected*, not yet confirmed by a `capture_semantics.pine` export. Still missing: sessions,
+  provides Pine's bar-by-bar execution model and scalar rules, confirmed by one
+  `capture_semantics.pine` export (§12). Still missing: sessions,
   `request.security`, and most built-ins beyond the ones above. Parity claims cover confirmed historical bars only; live/realtime behaviour cannot
   be checked from exports.
 

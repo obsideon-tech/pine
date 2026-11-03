@@ -300,12 +300,12 @@ export-derived value in the test docstring:
   returns `na` on the first bar **(unverified)**;
 - `ta.crossover`/`crossunder`: comparisons with `na` are false, so output is never `na`
   (v6 semantics; v5 may differ);
-- **possible systematic difference** (now testable: `na_policy` and the capture script's
-  `*_na` columns, §10 A2): recent manual pages may say that `na` values in `source` are
-  *ignored*, with the window extending back over `length` non-`na` values. If
-  so, the propagate-`na` behaviour used here for `sma`, `ema`, `rma`, `stdev`, `highest` and
-  `lowest` is wrong at gaps (it is unaffected on gap-free data). Settle with an export of a
-  series containing `na` before any consumer relies on behaviour at gaps;
+- **`na` inside windows — decided by export (2026-11-03, §12):** `sma`, `stdev`, `highest`,
+  `lowest` *skip* `na` (window over the last `length` valid values; a value is output on the
+  `na` bar too); `ema`, `rma`, `rsi` carry their state across `na` and output `na` on the `na`
+  bar (`skip_na_out`); `ta.change` propagates `na`. Now the defaults
+  (`pine.ta.DEFAULT_NA_POLICY`). `atr` inherits `rma`'s default by construction — not yet
+  observed directly;
 - facts the lint rules rest on **(unverified)**: `lookahead` is the 5th positional parameter
   of `request.security` (after symbol, timeframe, expression, gaps); `alert()`'s default
   `freq` is `alert.freq_once_per_bar` (fires intrabar); a negative literal history index
@@ -593,7 +593,10 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         `tools/reference_capture.example.yaml`. Consistency tests tie the Pine constants and
         plot titles to `pine.reference`; the script is lint-clean. Synthetic end-to-end tests
         prove the plumbing only. **Remaining: the exports themselves (owner action).**
-- [ ] **[high] A2 — `na_policy` switch and the opposite-policy mutant** (§10 A2)
+- [x] **[high] A2 — `na_policy` switch and the opposite-policy mutant** (§10 A2) — **decided
+      2026-11-03** by the NFLX export (§12): windowed built-ins `skip`, recursive ones
+      `skip_na_out`; these are now the defaults (`pine.ta.DEFAULT_NA_POLICY`) in `pine.ta` and
+      `pine.runtime`. The switch is kept as an override rather than removed (see §12).
       - _Raised:_ 2026-11-03
       - _Why:_ the `na`-window rule is the single most consequential unverified semantic.
       - _Done when:_ both policies implemented, the mutant is detected, and an export with `na`
@@ -747,7 +750,10 @@ with different constants if any built-in's code branches on length.
 functions an `na_policy` (`"propagate"` as now, `"skip"` = extend the window back over `length`
 non-`na` values), and add the other policy as a mutant so the harness is shown to separate
 them. Remove the switch once settled. Tradeoff: temporary API surface; the alternative
-(guessing) risks a systematic error that every current test would miss.
+(guessing) risks a systematic error that every current test would miss. *Status
+2026-11-03: decided by export (§12) — windowed `skip`, recursive `skip_na_out`; adopted as
+defaults. The switch stays as an explicit override: one export and one gap pattern decided
+it, and keeping the alternatives costs little while a second capture is outstanding.*
 
 **A3. Tolerances that account for rounded inputs.** If the export rounds inputs to `δ_in` and
 outputs to `δ_out`, the port's legitimate error is bounded by `L·δ_in + δ_out`, where `L` is
@@ -1042,3 +1048,29 @@ Consequences: `pine.truncation` (offset-aware, history-robust checks), `min_comp
 (no vacuous passes), the regime probe split into `per_call`/`every_bar`, and a test-assumption
 bug fixed in the RSI affine-invariance property test (found by a random-seed run while
 validating these changes).
+
+### 2026-11-03 — same export, re-checked with the offset-aware checker
+
+**Overall: PASS** (exit 0). With the export's `bar_index` offset (3116) handled:
+
+| Item | Result |
+|---|---|
+| `sma`, `ema`, `rma`, `rsi`, `atr`, `stdev` (both), `highest`, `lowest`, `tr` (both), `ema(9)`, `ema(21)` | **match** over 2647–3034 bars each; max abs error 7.7e-12 (rsi), all others ≤ 1.3e-12, highest/lowest/tr exactly 0 |
+| EMA / RMA / ATR recursion and `α` | **verified on every bar** by the exact residual-decay check; seeds remain unverified (export starts mid-history) |
+| `crossover`, `crossunder` | **match** exactly (0 excused flips) |
+| `na` inside windows | **decided**: `sma`/`stdev`/`highest`/`lowest` → `skip`; `ema`/`rma`/`rsi` → `skip_na_out` (each column matched exactly one policy) — adopted as defaults |
+| Execution model | **confirmed**: conditional `ta.ema`/`ta.sma`/user function/`ta.crossover` advance per call; call sites separate; `var`/`varip` increments; branch history per bar; `ta.change` propagates `na` |
+| Scalar rules | **confirmed**: rounding ties away from zero, truncated `%`, fractional int division, `int()` toward zero, `na == na` false |
+| Ports | Supertrend (manual code), ratcheting stop, regime machine (`per_call`): **match** after synchronising at rows 259 / 369 / 321 |
+| `barssince` / `valuewhen` before the first event | not decidable from this export (needs one starting at bar 0) |
+
+Changes made on this evidence: `pine.ta.DEFAULT_NA_POLICY` and per-built-in defaults in
+`pine.ta` and `pine.runtime` (incremental built-ins now implement `skip` / `skip_na_out`,
+equal to `pine.ta` bit for bit under every policy); mutation-suite expectations re-derived
+for the new defaults (`highest` with `na → 0` is detected three bars after the gap on the
+fixture, data-dependently, since a 0 cannot raise a maximum).
+
+**Still open:** seeding of `ema`/`rma`/`atr`/`rsi` and pre-event `barssince`/`valuewhen` —
+next export: a chart whose whole history fits one export (e.g. NFLX weekly, ≈1 270 bars), so
+it starts at `bar_index` 0. Also outstanding: the rest of the §10 A1 matrix (price < 1,
+> 10 000, opening gaps, DST).

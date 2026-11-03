@@ -60,7 +60,7 @@ def stdev_lipschitz(length: int, biased: bool = True) -> float:
 
 
 def rsi_input_error(
-    source: ArrayLike, length: int, delta: float, na_policy: ta.NaPolicy = "propagate"
+    source: ArrayLike, length: int, delta: float, na_policy: ta.NaPolicy | None = None
 ) -> np.ndarray:
     """Per-bar bound on ``|RSI(x) - RSI(x')|`` for inputs within ``±delta`` of each other.
 

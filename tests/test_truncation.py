@@ -75,8 +75,10 @@ def test_reference_passes_on_truncated_export(full, tmp_path):
 
 
 def test_na_policy_still_decided_on_truncated_export(full, tmp_path):
+    # The synthetic history uses the observed defaults; the truncated export must recover them.
     decisions = decide_na_policy(tail(full, tmp_path))
-    assert {d.column: d.matching for d in decisions} == {c: ("propagate",) for c in NA_PORTS}
+    expected = {c: (ta.DEFAULT_NA_POLICY[c.removesuffix("_na")],) for c in NA_PORTS}
+    assert {d.column: d.matching for d in decisions} == expected
 
 
 def test_decay_check_catches_a_wrong_alpha(full, tmp_path):

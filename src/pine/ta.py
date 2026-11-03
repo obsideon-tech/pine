@@ -22,9 +22,13 @@ Speed is not a goal yet.
   state unchanged across it).
 - ``"skip_na_out"``: as ``"skip"``, but the output is `na` wherever the source is `na`.
 
-The switch is temporary: a TradingView export with gaps (``tools/reference_capture.pine``)
-decides between the hypotheses, after which the losing ones are removed. On gap-free input
-all three are identical.
+**Defaults are the observed TradingView behaviour** (`DEFAULT_NA_POLICY`; BATS:NFLX 1D export
+of ``tools/reference_capture.pine``, 2026-11-03, PINE_PLAN.md §12): the windowed built-ins
+(``sma``, ``stdev``, ``highest``, ``lowest``) follow ``"skip"``; the recursive ones (``ema``,
+``rma``, ``rsi``) follow ``"skip_na_out"``. In that export each column matched exactly one
+policy. ``na_policy`` stays as an explicit override. On gap-free input all three are identical.
+``atr`` inherits ``rma``'s default (the manual's code is ``ta.rma(trueRange, length)``); that
+inheritance itself is not yet observed.
 """
 
 from __future__ import annotations
@@ -38,9 +42,19 @@ from numpy.typing import ArrayLike
 
 NaPolicy = Literal["propagate", "skip", "skip_na_out"]
 NA_POLICIES: tuple[str, ...] = ("propagate", "skip", "skip_na_out")
+DEFAULT_NA_POLICY: dict[str, str] = {
+    "sma": "skip",
+    "stdev": "skip",
+    "highest": "skip",
+    "lowest": "skip",
+    "ema": "skip_na_out",
+    "rma": "skip_na_out",
+    "rsi": "skip_na_out",
+}
 
 __all__ = [
     "NA_POLICIES",
+    "DEFAULT_NA_POLICY",
     "NaPolicy",
     "sma",
     "ema",
@@ -67,7 +81,9 @@ def _length(length: int) -> int:
     return int(length)
 
 
-def _policy(na_policy: str) -> str:
+def _policy(na_policy: str | None, name: str | None = None) -> str:
+    if na_policy is None and name is not None:
+        return DEFAULT_NA_POLICY[name]
     if na_policy not in NA_POLICIES:
         raise ValueError(f"na_policy must be one of {NA_POLICIES}, got {na_policy!r}")
     return na_policy
@@ -92,7 +108,7 @@ def _source(source: ArrayLike) -> np.ndarray:
     return x
 
 
-def sma(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
+def sma(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
     """``ta.sma``. Manual's code::
 
         pine_sma(x, y) =>
@@ -107,8 +123,9 @@ def sma(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np
     n_len = _length(length)
     x = _source(source)
     out = np.full(x.size, np.nan)
-    if _policy(na_policy) != "propagate":
-        for t, w in _skip_windows(x, n_len, na_policy):
+    policy = _policy(na_policy, "sma")
+    if policy != "propagate":
+        for t, w in _skip_windows(x, n_len, policy):
             s = 0.0
             for v in w[::-1]:
                 s += v / n_len
@@ -141,7 +158,7 @@ def _seeded_recursive(x: np.ndarray, n_len: int, alpha: float, policy: str) -> n
             state = seed[t] if math.isnan(state) else alpha * x[t] + (1.0 - alpha) * state
             out[t] = state
         return out
-    seed = sma(x, n_len)
+    seed = sma(x, n_len, "propagate")
     out = np.full(x.size, np.nan)
     prev = math.nan
     for t in range(x.size):
@@ -151,20 +168,20 @@ def _seeded_recursive(x: np.ndarray, n_len: int, alpha: float, policy: str) -> n
     return out
 
 
-def ema(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
+def ema(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
     """``ta.ema``: ``alpha = 2 / (length + 1)``, seeded with ``ta.sma(src, length)``."""
     n_len = _length(length)
-    return _seeded_recursive(_source(source), n_len, 2.0 / (n_len + 1), _policy(na_policy))
+    return _seeded_recursive(_source(source), n_len, 2.0 / (n_len + 1), _policy(na_policy, "ema"))
 
 
-def rma(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
+def rma(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
     """``ta.rma`` (Wilder): ``alpha = 1 / length``, seeded with ``ta.sma(src, length)``."""
     n_len = _length(length)
-    return _seeded_recursive(_source(source), n_len, 1.0 / n_len, _policy(na_policy))
+    return _seeded_recursive(_source(source), n_len, 1.0 / n_len, _policy(na_policy, "rma"))
 
 
 def rsi_components(
-    source: ArrayLike, length: int, na_policy: NaPolicy = "propagate"
+    source: ArrayLike, length: int, na_policy: NaPolicy | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """``(up, down)``: the two RMAs inside ``ta.rsi``. Exposed so the RSI input-rounding bound
     (`pine.sensitivity.rsi_input_error`) uses exactly the port's values."""
@@ -177,10 +194,11 @@ def rsi_components(
         if not math.isnan(ch):
             u[t] = max(ch, 0.0)
             d[t] = max(-ch, 0.0)
-    return rma(u, n_len, na_policy), rma(d, n_len, na_policy)
+    policy = _policy(na_policy, "rsi")
+    return rma(u, n_len, policy), rma(d, n_len, policy)
 
 
-def rsi(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
+def rsi(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
     """``ta.rsi``. Manual's code::
 
         u = math.max(x - x[1], 0)
@@ -210,7 +228,7 @@ _STDEV_EPS = 1e-10
 
 
 def stdev(
-    source: ArrayLike, length: int, biased: bool = True, na_policy: NaPolicy = "propagate"
+    source: ArrayLike, length: int, biased: bool = True, na_policy: NaPolicy | None = None
 ) -> np.ndarray:
     """``ta.stdev``. Manual's code, in outline::
 
@@ -233,9 +251,10 @@ def stdev(
     x = _source(source)
     denom = n_len if biased else n_len - 1
     out = np.full(x.size, np.nan)
-    if _policy(na_policy) != "propagate":
-        avg = sma(x, n_len, na_policy)
-        for t, w in _skip_windows(x, n_len, na_policy):
+    policy = _policy(na_policy, "stdev")
+    if policy != "propagate":
+        avg = sma(x, n_len, policy)
+        for t, w in _skip_windows(x, n_len, policy):
             ss = 0.0
             for v in w[::-1]:
                 d = v - avg[t]
@@ -244,7 +263,7 @@ def stdev(
                 ss += d * d
             out[t] = math.sqrt(ss / denom)
         return out
-    avg = sma(x, n_len)
+    avg = sma(x, n_len, "propagate")
     for t in range(n_len - 1, x.size):
         if math.isnan(avg[t]):
             continue
@@ -271,16 +290,16 @@ def _window_extreme(x: np.ndarray, n_len: int, pick, policy: str) -> np.ndarray:
     return out
 
 
-def highest(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
+def highest(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
     """``ta.highest(source, length)``: maximum over the current and previous ``length - 1``
     bars. `na` for the first ``length - 1`` bars; `na` inside the window per ``na_policy``
     (**unverified** which policy the built-in uses; see PINE_PLAN.md §10 A2)."""
-    return _window_extreme(_source(source), _length(length), np.max, _policy(na_policy))
+    return _window_extreme(_source(source), _length(length), np.max, _policy(na_policy, "highest"))
 
 
-def lowest(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
+def lowest(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
     """``ta.lowest(source, length)``; same window and `na` rules as `highest`."""
-    return _window_extreme(_source(source), _length(length), np.min, _policy(na_policy))
+    return _window_extreme(_source(source), _length(length), np.min, _policy(na_policy, "lowest"))
 
 
 def tr(high: ArrayLike, low: ArrayLike, close: ArrayLike, handle_na: bool = False) -> np.ndarray:

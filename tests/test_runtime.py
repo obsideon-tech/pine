@@ -176,6 +176,35 @@ def test_incremental_equals_vectorised_bit_for_bit(seed, n, name, gaps):
     np.testing.assert_array_equal(r["y"], vec(x, n))
 
 
+POLICY_FNS = ("sma", "ema", "rma", "rsi", "stdev", "highest", "lowest")
+
+
+@settings(max_examples=examples(30), deadline=None)
+@given(
+    st.integers(0, 10_000),
+    st.integers(1, 15),
+    st.sampled_from(POLICY_FNS),
+    st.sampled_from(ta.NA_POLICIES),
+)
+def test_incremental_equals_vectorised_under_every_na_policy(seed, n, name, policy):
+    b = _bars(seed)
+    x = _with_gaps(b.close, seed)
+
+    def script(ctx):
+        ctx.plot("y", getattr(ctx.ta, name)("f", x[ctx.i], n, na_policy=policy))
+
+    np.testing.assert_array_equal(run(script, b)["y"], getattr(ta, name)(x, n, na_policy=policy))
+
+
+def test_runtime_defaults_follow_observed_policy():
+    from pine.ta import DEFAULT_NA_POLICY
+
+    assert DEFAULT_NA_POLICY == {
+        "sma": "skip", "stdev": "skip", "highest": "skip", "lowest": "skip",
+        "ema": "skip_na_out", "rma": "skip_na_out", "rsi": "skip_na_out",
+    }  # fmt: skip
+
+
 @settings(max_examples=examples(20), deadline=None)
 @given(st.integers(0, 10_000), st.integers(1, 20))
 def test_bar_based_builtins_equal_vectorised(seed, n):
