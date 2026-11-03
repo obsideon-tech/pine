@@ -15,6 +15,9 @@ uv sync
 uv run pytest
 ```
 
+CI runs property tests derandomized (`HYPOTHESIS_PROFILE=ci`) with a branch-coverage floor; a
+weekly job runs them with random seeds and 10× the examples (`HYPOTHESIS_PROFILE=thorough`).
+
 ```python
 from pine.io import load_tradingview_csv
 

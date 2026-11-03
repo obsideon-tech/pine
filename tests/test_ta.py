@@ -7,6 +7,7 @@ import math
 
 import numpy as np
 import pytest
+from hyp import examples
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
@@ -141,21 +142,21 @@ series = st.lists(
 lengths = st.integers(min_value=1, max_value=15)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths, st.floats(min_value=-1e3, max_value=1e3))
 def test_ma_translation_equivariance(x, n, c):
     for f in MAS.values():
         np.testing.assert_allclose(f(x + c, n), f(x, n) + c, rtol=1e-9, atol=1e-8)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths, st.floats(min_value=1e-3, max_value=1e3))
 def test_ma_scale_equivariance(x, n, k):
     for f in MAS.values():
         np.testing.assert_allclose(f(k * x, n), k * f(x, n), rtol=1e-9, atol=1e-9)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths)
 def test_ma_bounded_by_window_range(x, n):
     # Every MA here is a convex combination of past values: within [min, max] of the input.
@@ -164,7 +165,7 @@ def test_ma_bounded_by_window_range(x, n):
         assert (out >= x.min() - 1e-9).all() and (out <= x.max() + 1e-9).all()
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths, st.floats(min_value=1e-2, max_value=1e2), st.floats(-1e3, 1e3))
 def test_rsi_positive_affine_invariance_and_bounds(x, n, a, b):
     r = ta.rsi(x, n)
@@ -172,7 +173,7 @@ def test_rsi_positive_affine_invariance_and_bounds(x, n, a, b):
     np.testing.assert_allclose(ta.rsi(a * x + b, n), r, atol=1e-7)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths)
 def test_rsi_reflection_sums_to_100(x, n):
     r1, r2 = ta.rsi(x, n), ta.rsi(-x, n)
@@ -206,7 +207,7 @@ def test_stdev_length_one_and_unbiased_guard():
         ta.stdev(np.arange(5.0), 1, biased=False)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, st.integers(2, 15), st.floats(-1e3, 1e3), st.floats(1e-2, 1e2))
 def test_stdev_properties(x, n, c, k):
     s = ta.stdev(x, n)
@@ -236,7 +237,7 @@ def test_highest_na_in_window_propagates():
     assert np.isnan(out[10:13]).all() and not np.isnan(out[13:]).any()
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths)
 def test_highest_lowest_properties(x, n):
     hi, lo = ta.highest(x, n), ta.lowest(x, n)
@@ -288,7 +289,7 @@ def test_atr_na_close_makes_next_true_range_na():
     assert not np.isnan(out[30]) and np.isnan(out[31:36]).all() and not np.isnan(out[36])
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=examples(40), deadline=None)
 @given(st.integers(0, 10_000), st.integers(1, 15), st.floats(-50, 50), st.floats(0.1, 10))
 def test_atr_translation_and_scale(seed, n, c0, k):
     h, lo, c = _bars(np.random.default_rng(seed))
@@ -315,7 +316,7 @@ def test_crossover_scalar_level_and_na_is_false():
     assert ta.crossover(a, 30).dtype == bool
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, series)
 def test_crossover_properties(a, b):
     m = min(a.size, b.size)
@@ -374,7 +375,7 @@ def test_unknown_policy_rejected(fn):
         fn(np.arange(10.0), 3, na_policy="ignore")
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=examples(40), deadline=None)
 @given(series, lengths)
 def test_policies_identical_on_gap_free_input(x, n):
     for fn in (ta.sma, ta.ema, ta.rma, ta.rsi, ta.stdev, ta.highest, ta.lowest):

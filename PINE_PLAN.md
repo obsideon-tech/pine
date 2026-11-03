@@ -422,6 +422,23 @@ only a tag, because tags are mutable.
 Python version matrix. numpy and other numeric deps pinned in the lockfile, because reduction
 results can shift between versions. The mutation suite (§5.9) runs in CI.
 
+Since 2026-11-03 (§10 D2):
+
+| Job | When | Dependencies | Hypothesis | Purpose |
+|---|---|---|---|---|
+| `ci` (3.11–3.13) | every push / PR | locked | `ci`: derandomized | gate; failures reproduce exactly; branch coverage with `fail_under = 95` (measured 97%) |
+| `weekly / random-examples` | Mondays + manual | locked | `thorough`: random seeds, 10× examples | keep searching for counterexamples CI cannot find |
+| `weekly / latest-deps` | Mondays + manual | upgraded (lockfile ignored) | `ci` | catch upstream numeric changes before they reach the lockfile |
+
+The two weekly jobs are separate so a failure's cause is unambiguous (new example vs new
+dependency). Example budgets go through `tests/hyp.py` (`examples(n)`), because an explicit
+`max_examples` would otherwise override the profile. A Hypothesis failure prints a
+`@reproduce_failure` blob; keep the counterexample as an explicit `@example` once fixed.
+Coverage is measured inside CI only (no external coverage service). Dependabot proposes weekly
+grouped PRs for the SHA-pinned actions and the uv lockfile; support for the `uv` ecosystem in
+Dependabot is believed current but **unverified** here — if it is rejected, only the
+`github-actions` entry is needed.
+
 ### 7.4 Public-repo hygiene
 
 - A denylist of private names checked in pre-commit or CI would itself leak those names if
@@ -577,10 +594,9 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Raised:_ 2026-11-03
       - _Why:_ consumers need a pinned, documented version (§7.2).
       - _Done when:_ tag on `main` after the history decision; CHANGELOG lists the API.
-- [ ] **[low] D2 — Deterministic CI profile, weekly random run, coverage floor** (§10 D2)
-      - _Raised:_ 2026-11-03
-      - _Why:_ property tests are currently random per run; coverage is unmeasured.
-      - _Done when:_ CI derandomized; scheduled job with random seeds; `--cov` with a floor.
+- [x] **[low] D2 — Deterministic CI profile, weekly random run, coverage floor** (§10 D2) —
+      done 2026-11-03 (§7.3). Owner check: the first scheduled run and the first Dependabot PRs
+      appear only after merge to the default branch.
 - [x] **[med] Offset-aware `lookahead_on` rule** (§6.2) — done 2026-11-03; the `close[1]`
       idiom and four variants are negative fixtures.
 - [x] **[low] PyPI name check and trademark disclaimer** (§7.4, §8) — `pine-parity`;
@@ -719,7 +735,8 @@ measured.
 **D2. CI.** A Hypothesis CI profile with `derandomize=True` so failures reproduce, plus a
 scheduled weekly job with random seeds to keep searching; `pytest --cov` with a floor;
 dependabot for the SHA-pinned actions. Tradeoff: deterministic CI finds fewer new
-counterexamples, hence the weekly random run.
+counterexamples, hence the weekly random run. *Status 2026-11-03: done (§7.3); a local
+thorough run (10× examples) found no counterexample.*
 
 **D3. Performance, only when needed.** The reference loops are O(n·L) pure Python. Add
 vectorised fast paths only when a consumer needs more than ~10⁵ bars, each validated against

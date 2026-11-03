@@ -7,6 +7,7 @@ Setup throughout: "Pine" computes on the full history; "Python" sees only a suff
 
 import numpy as np
 import pytest
+from hyp import examples
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -31,7 +32,7 @@ def _ohlc(seed, n=700, vol=1.0):
     return h, lo, c
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=examples(40), deadline=None)
 @given(st.integers(0, 10_000), st.integers(1, 120), st.integers(2, 30))
 def test_atr_bound_covers_realised_truncation_error(seed, s, n):
     h, lo, c = _ohlc(seed)
@@ -53,7 +54,7 @@ def test_atr_residual_decays_exactly_geometrically():
     np.testing.assert_allclose(r[w:], r[w] * (1 - 1 / L) ** k, rtol=1e-7, atol=1e-12)
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=examples(40), deadline=None)
 @given(st.integers(0, 10_000), st.integers(1, 120), st.integers(2, 30), st.floats(0.01, 3.0))
 def test_rsi_bound_covers_realised_truncation_error(seed, s, n, vol):
     _, _, x = _ohlc(seed, vol=vol)

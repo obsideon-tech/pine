@@ -9,3 +9,6 @@ build/
 .hypothesis/
 # Real TradingView exports stay local until export terms are confirmed (PINE_PLAN.md §8).
 tests/fixtures/tradingview/
+.coverage
+.coverage.*
+htmlcov/

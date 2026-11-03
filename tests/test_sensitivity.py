@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pytest
+from hyp import examples
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -45,7 +46,7 @@ SINGLE = {
 }
 
 
-@settings(max_examples=80, deadline=None)
+@settings(max_examples=examples(80), deadline=None)
 @given(
     st.integers(0, 10_000),
     st.integers(2, 20),
@@ -69,7 +70,7 @@ def test_single_input_bounds_are_sound(seed, n, delta, mode, name, policy):
     assert np.nanmax(diff, initial=0) <= L * delta + EPS * 100
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(st.integers(0, 10_000), st.integers(1, 20), st.floats(1e-6, 1e-1), st.sampled_from(MODES))
 def test_tr_and_atr_bounds_are_sound(seed, n, delta, mode):
     rng = np.random.default_rng(seed)
@@ -83,7 +84,7 @@ def test_tr_and_atr_bounds_are_sound(seed, n, delta, mode):
         assert np.nanmax(diff) <= 2 * delta + EPS * 100
 
 
-@settings(max_examples=80, deadline=None)
+@settings(max_examples=examples(80), deadline=None)
 @given(
     st.integers(0, 10_000),
     st.integers(2, 20),

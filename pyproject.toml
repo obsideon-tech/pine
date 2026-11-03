@@ -20,6 +20,7 @@ dev = [
     "pytest>=8",
     "hypothesis>=6",
     "ruff>=0.6",
+    "pytest-cov>=7.1.0",
 ]
 
 [build-system]
@@ -32,6 +33,17 @@ packages = ["src/pine"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+source = ["pine"]
+branch = true
+
+[tool.coverage.report]
+# Measured 97% (branch) on 2026-11-03; the floor leaves room for refactors, not for untested
+# features (PINE_PLAN.md §7.3, §10 D2). Raise it when coverage rises.
+fail_under = 95
+show_missing = true
+skip_covered = true
 
 [tool.ruff]
 line-length = 100
