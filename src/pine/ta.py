@@ -11,20 +11,42 @@ propagation reproduces; comparisons and `math.max` are handled explicitly.
 
 Loops are deliberate: they mirror Pine's execution model and summation order (§5.6).
 Speed is not a goal yet.
+
+**`na` inside windows is unsettled** (PINE_PLAN.md §5.10, §10 A2). The window functions
+(`sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`) take ``na_policy``:
+
+- ``"propagate"`` (default): the manual's code as recalled; any `na` in the window gives
+  `na`, and recursive filters re-seed after a gap.
+- ``"skip"``: `na` values are ignored and the window extends back over ``length`` non-`na`
+  values; a bar whose own source is `na` still gets a value (recursive filters carry their
+  state unchanged across it).
+- ``"skip_na_out"``: as ``"skip"``, but the output is `na` wherever the source is `na`.
+
+The switch is temporary: a TradingView export with gaps (``tools/reference_capture.pine``)
+decides between the hypotheses, after which the losing ones are removed. On gap-free input
+all three are identical.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
+from typing import Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
 
+NaPolicy = Literal["propagate", "skip", "skip_na_out"]
+NA_POLICIES: tuple[str, ...] = ("propagate", "skip", "skip_na_out")
+
 __all__ = [
+    "NA_POLICIES",
+    "NaPolicy",
     "sma",
     "ema",
     "rma",
     "rsi",
+    "rsi_components",
     "stdev",
     "highest",
     "lowest",
@@ -32,6 +54,10 @@ __all__ = [
     "atr",
     "crossover",
     "crossunder",
+    "change",
+    "barssince",
+    "valuewhen",
+    "supertrend",
 ]
 
 
@@ -41,6 +67,24 @@ def _length(length: int) -> int:
     return int(length)
 
 
+def _policy(na_policy: str) -> str:
+    if na_policy not in NA_POLICIES:
+        raise ValueError(f"na_policy must be one of {NA_POLICIES}, got {na_policy!r}")
+    return na_policy
+
+
+def _skip_windows(x: np.ndarray, n_len: int, policy: str) -> Iterator[tuple[int, np.ndarray]]:
+    """For the skip policies: ``(t, window)`` with the last ``n_len`` non-`na` values up to
+    bar ``t``, oldest first. Under ``skip_na_out`` bars whose own value is `na` are omitted."""
+    valid: list[int] = []
+    for t in range(x.size):
+        own_na = math.isnan(x[t])
+        if not own_na:
+            valid.append(t)
+        if len(valid) >= n_len and not (own_na and policy == "skip_na_out"):
+            yield t, x[valid[-n_len:]]
+
+
 def _source(source: ArrayLike) -> np.ndarray:
     x = np.array(source, dtype=np.float64, copy=True)
     if x.ndim != 1:
@@ -48,7 +92,7 @@ def _source(source: ArrayLike) -> np.ndarray:
     return x
 
 
-def sma(source: ArrayLike, length: int) -> np.ndarray:
+def sma(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
     """``ta.sma``. Manual's code::
 
         pine_sma(x, y) =>
@@ -58,11 +102,18 @@ def sma(source: ArrayLike, length: int) -> np.ndarray:
             sum
 
     Newest bar first, each term divided before adding. `na` for the first ``length - 1``
-    bars and for any window containing `na`.
+    bars and, under ``"propagate"``, for any window containing `na`.
     """
     n_len = _length(length)
     x = _source(source)
     out = np.full(x.size, np.nan)
+    if _policy(na_policy) != "propagate":
+        for t, w in _skip_windows(x, n_len, na_policy):
+            s = 0.0
+            for v in w[::-1]:
+                s += v / n_len
+            out[t] = s
+        return out
     for t in range(n_len - 1, x.size):
         s = 0.0
         for i in range(n_len):
@@ -71,11 +122,25 @@ def sma(source: ArrayLike, length: int) -> np.ndarray:
     return out
 
 
-def _seeded_recursive(x: np.ndarray, n_len: int, alpha: float) -> np.ndarray:
+def _seeded_recursive(x: np.ndarray, n_len: int, alpha: float, policy: str) -> np.ndarray:
     """``sum := na(sum[1]) ? ta.sma(src, length) : alpha * src + (1 - alpha) * nz(sum[1])``.
 
-    Re-seeds from the SMA whenever the previous value is `na`, as the Pine code does.
+    Re-seeds from the SMA whenever the previous value is `na`, as the Pine code does. Under
+    the skip policies the state is seeded once from the skip-SMA and carried unchanged
+    across `na` source bars.
     """
+    if policy != "propagate":
+        seed = sma(x, n_len, "skip")
+        out = np.full(x.size, np.nan)
+        state = math.nan
+        for t in range(x.size):
+            if math.isnan(x[t]):
+                if policy == "skip":
+                    out[t] = state
+                continue
+            state = seed[t] if math.isnan(state) else alpha * x[t] + (1.0 - alpha) * state
+            out[t] = state
+        return out
     seed = sma(x, n_len)
     out = np.full(x.size, np.nan)
     prev = math.nan
@@ -86,29 +151,23 @@ def _seeded_recursive(x: np.ndarray, n_len: int, alpha: float) -> np.ndarray:
     return out
 
 
-def ema(source: ArrayLike, length: int) -> np.ndarray:
+def ema(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
     """``ta.ema``: ``alpha = 2 / (length + 1)``, seeded with ``ta.sma(src, length)``."""
     n_len = _length(length)
-    return _seeded_recursive(_source(source), n_len, 2.0 / (n_len + 1))
+    return _seeded_recursive(_source(source), n_len, 2.0 / (n_len + 1), _policy(na_policy))
 
 
-def rma(source: ArrayLike, length: int) -> np.ndarray:
+def rma(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
     """``ta.rma`` (Wilder): ``alpha = 1 / length``, seeded with ``ta.sma(src, length)``."""
     n_len = _length(length)
-    return _seeded_recursive(_source(source), n_len, 1.0 / n_len)
+    return _seeded_recursive(_source(source), n_len, 1.0 / n_len, _policy(na_policy))
 
 
-def rsi(source: ArrayLike, length: int) -> np.ndarray:
-    """``ta.rsi``. Manual's code::
-
-        u = math.max(x - x[1], 0)
-        d = math.max(x[1] - x, 0)
-        up = ta.rma(u, y)
-        down = ta.rma(d, y)
-        down == 0 ? 100 : up == 0 ? 0 : 100 - 100 / (1 + up / down)
-
-    The first change is `na`, so the first value is at bar ``length`` (0-based).
-    """
+def rsi_components(
+    source: ArrayLike, length: int, na_policy: NaPolicy = "propagate"
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(up, down)``: the two RMAs inside ``ta.rsi``. Exposed so the RSI input-rounding bound
+    (`pine.sensitivity.rsi_input_error`) uses exactly the port's values."""
     n_len = _length(length)
     x = _source(source)
     u = np.full(x.size, np.nan)
@@ -118,10 +177,24 @@ def rsi(source: ArrayLike, length: int) -> np.ndarray:
         if not math.isnan(ch):
             u[t] = max(ch, 0.0)
             d[t] = max(-ch, 0.0)
-    up = rma(u, n_len)
-    down = rma(d, n_len)
-    out = np.full(x.size, np.nan)
-    for t in range(x.size):
+    return rma(u, n_len, na_policy), rma(d, n_len, na_policy)
+
+
+def rsi(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
+    """``ta.rsi``. Manual's code::
+
+        u = math.max(x - x[1], 0)
+        d = math.max(x[1] - x, 0)
+        up = ta.rma(u, y)
+        down = ta.rma(d, y)
+        down == 0 ? 100 : up == 0 ? 0 : 100 - 100 / (1 + up / down)
+
+    The first change is `na`, so the first value is at bar ``length`` (0-based). A change
+    is `na` when either bar is `na`; ``na_policy`` applies to the two RMAs.
+    """
+    up, down = rsi_components(source, length, na_policy)
+    out = np.full(up.size, np.nan)
+    for t in range(up.size):
         if math.isnan(up[t]) or math.isnan(down[t]):
             continue
         if down[t] == 0.0:
@@ -136,7 +209,9 @@ def rsi(source: ArrayLike, length: int) -> np.ndarray:
 _STDEV_EPS = 1e-10
 
 
-def stdev(source: ArrayLike, length: int, biased: bool = True) -> np.ndarray:
+def stdev(
+    source: ArrayLike, length: int, biased: bool = True, na_policy: NaPolicy = "propagate"
+) -> np.ndarray:
     """``ta.stdev``. Manual's code, in outline::
 
         avg = ta.sma(src, length)
@@ -156,9 +231,20 @@ def stdev(source: ArrayLike, length: int, biased: bool = True) -> np.ndarray:
     if not biased and n_len < 2:
         raise ValueError("unbiased stdev needs length >= 2")
     x = _source(source)
-    avg = sma(x, n_len)
     denom = n_len if biased else n_len - 1
     out = np.full(x.size, np.nan)
+    if _policy(na_policy) != "propagate":
+        avg = sma(x, n_len, na_policy)
+        for t, w in _skip_windows(x, n_len, na_policy):
+            ss = 0.0
+            for v in w[::-1]:
+                d = v - avg[t]
+                if abs(d) <= _STDEV_EPS:
+                    d = 0.0
+                ss += d * d
+            out[t] = math.sqrt(ss / denom)
+        return out
+    avg = sma(x, n_len)
     for t in range(n_len - 1, x.size):
         if math.isnan(avg[t]):
             continue
@@ -172,8 +258,12 @@ def stdev(source: ArrayLike, length: int, biased: bool = True) -> np.ndarray:
     return out
 
 
-def _window_extreme(x: np.ndarray, n_len: int, pick) -> np.ndarray:
+def _window_extreme(x: np.ndarray, n_len: int, pick, policy: str) -> np.ndarray:
     out = np.full(x.size, np.nan)
+    if policy != "propagate":
+        for t, w in _skip_windows(x, n_len, policy):
+            out[t] = pick(w)
+        return out
     for t in range(n_len - 1, x.size):
         w = x[t - n_len + 1 : t + 1]
         if not np.isnan(w).any():
@@ -181,16 +271,16 @@ def _window_extreme(x: np.ndarray, n_len: int, pick) -> np.ndarray:
     return out
 
 
-def highest(source: ArrayLike, length: int) -> np.ndarray:
+def highest(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
     """``ta.highest(source, length)``: maximum over the current and previous ``length - 1``
-    bars. `na` for the first ``length - 1`` bars and, here, for any window containing `na`
-    (**unverified**: the built-in may skip `na` instead; see PINE_PLAN.md §5.10)."""
-    return _window_extreme(_source(source), _length(length), np.max)
+    bars. `na` for the first ``length - 1`` bars; `na` inside the window per ``na_policy``
+    (**unverified** which policy the built-in uses; see PINE_PLAN.md §10 A2)."""
+    return _window_extreme(_source(source), _length(length), np.max, _policy(na_policy))
 
 
-def lowest(source: ArrayLike, length: int) -> np.ndarray:
+def lowest(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
     """``ta.lowest(source, length)``; same window and `na` rules as `highest`."""
-    return _window_extreme(_source(source), _length(length), np.min)
+    return _window_extreme(_source(source), _length(length), np.min, _policy(na_policy))
 
 
 def tr(high: ArrayLike, low: ArrayLike, close: ArrayLike, handle_na: bool = False) -> np.ndarray:
@@ -267,3 +357,113 @@ def crossunder(a: ArrayLike, b: ArrayLike) -> np.ndarray:
     with np.errstate(invalid="ignore"):
         out[1:] = (a_[1:] < b_[1:]) & (a_[:-1] >= b_[:-1])
     return out
+
+
+def change(source: ArrayLike, length: int = 1) -> np.ndarray:
+    """``ta.change(source, length)``: ``source - source[length]``; `na` if either is `na`
+    (**unverified**: the alternative "last valid value" is probed by
+    ``tools/capture_semantics.pine``)."""
+    n_len = _length(length)
+    x = _source(source)
+    out = np.full(x.size, np.nan)
+    out[n_len:] = x[n_len:] - x[:-n_len]
+    return out
+
+
+def barssince(condition: ArrayLike) -> np.ndarray:
+    """``ta.barssince(condition)``: bars since ``condition`` was last true (0 on a true bar);
+    `na` before the first true bar (**unverified**, probed)."""
+    c = np.asarray(condition, dtype=bool)
+    out = np.full(c.size, np.nan)
+    count = math.nan
+    for t in range(c.size):
+        if c[t]:
+            count = 0.0
+        elif not math.isnan(count):
+            count += 1.0
+        out[t] = count
+    return out
+
+
+def valuewhen(condition: ArrayLike, source: ArrayLike, occurrence: int = 0) -> np.ndarray:
+    """``ta.valuewhen(condition, source, occurrence)``: ``source`` on the ``occurrence``-th most
+    recent bar where ``condition`` was true (0 = latest); `na` before enough events."""
+    if occurrence < 0:
+        raise ValueError("occurrence must be >= 0")
+    c = np.asarray(condition, dtype=bool)
+    x = _source(source)
+    if c.size != x.size:
+        raise ValueError("condition and source must have the same length")
+    out = np.full(x.size, np.nan)
+    hits: list[float] = []
+    for t in range(x.size):
+        if c[t]:
+            hits.append(x[t])
+        if len(hits) > occurrence:
+            out[t] = hits[-1 - occurrence]
+    return out
+
+
+def supertrend(
+    high: ArrayLike, low: ArrayLike, close: ArrayLike, factor: float, atr_period: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """``ta.supertrend(factor, atrPeriod)`` -> ``(supertrend, direction)``. Manual's code::
+
+        src = hl2
+        atr = ta.atr(atrPeriod)
+        upperBand = src + factor * atr
+        lowerBand = src - factor * atr
+        prevLowerBand = nz(lowerBand[1])
+        prevUpperBand = nz(upperBand[1])
+        lowerBand := lowerBand > prevLowerBand or close[1] < prevLowerBand ?
+             lowerBand : prevLowerBand
+        upperBand := upperBand < prevUpperBand or close[1] > prevUpperBand ?
+             upperBand : prevUpperBand
+        int _direction = na
+        float superTrend = na
+        prevSuperTrend = superTrend[1]
+        if na(atr[1])
+            _direction := 1
+        else if prevSuperTrend == prevUpperBand
+            _direction := close > upperBand ? -1 : 1
+        else
+            _direction := close < lowerBand ? 1 : -1
+        superTrend := _direction == -1 ? lowerBand : upperBand
+
+    Direction ``-1`` is an uptrend (line below price), ``1`` a downtrend. ``lowerBand[1]`` is the
+    *final* (reassigned) value of the previous bar. Comparisons with `na` are false, so during
+    ATR warm-up the lower band holds ``nz(na) = 0``, exactly as the Pine code does. A plain loop,
+    independent of `pine.runtime`, used as its second implementation (**unverified** against
+    TradingView until a capture export exists).
+    """
+    h, lo, c = _source(high), _source(low), _source(close)
+    a = atr(h, lo, c, atr_period)
+    src = (h + lo) / 2
+    n = c.size
+    st = np.full(n, np.nan)
+    direction = np.full(n, np.nan)
+    lower_f = np.full(n, np.nan)
+    upper_f = np.full(n, np.nan)
+
+    def nz(v: float) -> float:
+        return 0.0 if math.isnan(v) else v
+
+    for t in range(n):
+        lb = src[t] - factor * a[t]
+        ub = src[t] + factor * a[t]
+        prev_lb = nz(lower_f[t - 1]) if t > 0 else 0.0
+        prev_ub = nz(upper_f[t - 1]) if t > 0 else 0.0
+        prev_close = c[t - 1] if t > 0 else math.nan
+        lb = lb if (lb > prev_lb or prev_close < prev_lb) else prev_lb
+        ub = ub if (ub < prev_ub or prev_close > prev_ub) else prev_ub
+        lower_f[t], upper_f[t] = lb, ub
+        prev_st = st[t - 1] if t > 0 else math.nan
+        if t == 0 or math.isnan(a[t - 1]):
+            d = 1.0
+        elif prev_st == prev_ub:
+            d = -1.0 if c[t] > ub else 1.0
+        else:
+            d = 1.0 if c[t] < lb else -1.0
+        direction[t] = d
+        st[t] = lb if d == -1.0 else ub
+    return st, direction

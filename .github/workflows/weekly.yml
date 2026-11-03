@@ -1,0 +1,44 @@
+name: weekly
+
+# Scheduled checks that the per-push CI deliberately does not do (PINE_PLAN.md §7.3, §10 D2):
+# - random-examples: locked dependencies, random Hypothesis seeds and more examples, to keep
+#   searching for counterexamples that the derandomized CI profile cannot find.
+# - latest-deps: newest allowed dependency versions (lockfile ignored), derandomized, to catch
+#   upstream changes (e.g. numpy numerics) before they reach the lockfile.
+# Separate jobs keep the cause of a failure unambiguous.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  random-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked
+      # On failure, Hypothesis prints a @reproduce_failure blob: paste it into the test to
+      # replay the counterexample, then fix and keep it as an explicit @example.
+      - run: uv run pytest -p no:cacheprovider
+        env:
+          HYPOTHESIS_PROFILE: thorough
+
+  latest-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+      - run: uv sync --upgrade
+      - run: uv pip list
+      - run: uv run pytest
+        env:
+          HYPOTHESIS_PROFILE: ci

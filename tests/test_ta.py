@@ -7,6 +7,7 @@ import math
 
 import numpy as np
 import pytest
+from hyp import examples
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
@@ -141,21 +142,21 @@ series = st.lists(
 lengths = st.integers(min_value=1, max_value=15)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths, st.floats(min_value=-1e3, max_value=1e3))
 def test_ma_translation_equivariance(x, n, c):
     for f in MAS.values():
         np.testing.assert_allclose(f(x + c, n), f(x, n) + c, rtol=1e-9, atol=1e-8)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths, st.floats(min_value=1e-3, max_value=1e3))
 def test_ma_scale_equivariance(x, n, k):
     for f in MAS.values():
         np.testing.assert_allclose(f(k * x, n), k * f(x, n), rtol=1e-9, atol=1e-9)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths)
 def test_ma_bounded_by_window_range(x, n):
     # Every MA here is a convex combination of past values: within [min, max] of the input.
@@ -164,7 +165,7 @@ def test_ma_bounded_by_window_range(x, n):
         assert (out >= x.min() - 1e-9).all() and (out <= x.max() + 1e-9).all()
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths, st.floats(min_value=1e-2, max_value=1e2), st.floats(-1e3, 1e3))
 def test_rsi_positive_affine_invariance_and_bounds(x, n, a, b):
     r = ta.rsi(x, n)
@@ -172,7 +173,7 @@ def test_rsi_positive_affine_invariance_and_bounds(x, n, a, b):
     np.testing.assert_allclose(ta.rsi(a * x + b, n), r, atol=1e-7)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths)
 def test_rsi_reflection_sums_to_100(x, n):
     r1, r2 = ta.rsi(x, n), ta.rsi(-x, n)
@@ -206,7 +207,7 @@ def test_stdev_length_one_and_unbiased_guard():
         ta.stdev(np.arange(5.0), 1, biased=False)
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, st.integers(2, 15), st.floats(-1e3, 1e3), st.floats(1e-2, 1e2))
 def test_stdev_properties(x, n, c, k):
     s = ta.stdev(x, n)
@@ -236,7 +237,7 @@ def test_highest_na_in_window_propagates():
     assert np.isnan(out[10:13]).all() and not np.isnan(out[13:]).any()
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, lengths)
 def test_highest_lowest_properties(x, n):
     hi, lo = ta.highest(x, n), ta.lowest(x, n)
@@ -288,7 +289,7 @@ def test_atr_na_close_makes_next_true_range_na():
     assert not np.isnan(out[30]) and np.isnan(out[31:36]).all() and not np.isnan(out[36])
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=examples(40), deadline=None)
 @given(st.integers(0, 10_000), st.integers(1, 15), st.floats(-50, 50), st.floats(0.1, 10))
 def test_atr_translation_and_scale(seed, n, c0, k):
     h, lo, c = _bars(np.random.default_rng(seed))
@@ -315,7 +316,7 @@ def test_crossover_scalar_level_and_na_is_false():
     assert ta.crossover(a, 30).dtype == bool
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(series, series)
 def test_crossover_properties(a, b):
     m = min(a.size, b.size)
@@ -325,3 +326,95 @@ def test_crossover_properties(a, b):
     assert not co[0] and not cu[0]
     assert not (co & cu).any()
     assert not (co[1:] & co[:-1]).any()  # cannot cross over on two consecutive bars
+
+
+# ======================= na_policy (PINE_PLAN §10 A2) =======================
+
+NAN = np.nan
+
+
+@pytest.mark.parametrize(
+    "policy, expected",
+    [
+        ("propagate", [NAN, 1.5, NAN, NAN, 4.5]),
+        ("skip", [NAN, 1.5, 1.5, 3.0, 4.5]),
+        ("skip_na_out", [NAN, 1.5, NAN, 3.0, 4.5]),
+    ],
+)
+def test_sma_na_policies_hand_values(policy, expected):
+    out = ta.sma([1.0, 2.0, NAN, 4.0, 5.0], 2, na_policy=policy)
+    np.testing.assert_allclose(out, expected, equal_nan=True)
+
+
+@pytest.mark.parametrize(
+    "policy, expected",
+    [
+        ("propagate", [NAN, 1.5, NAN, NAN]),
+        ("skip", [NAN, 1.5, 1.5, 2 / 3 * 4 + 1 / 3 * 1.5]),
+        ("skip_na_out", [NAN, 1.5, NAN, 2 / 3 * 4 + 1 / 3 * 1.5]),
+    ],
+)
+def test_ema_na_policies_carry_state(policy, expected):
+    np.testing.assert_allclose(
+        ta.ema([1.0, 2.0, NAN, 4.0], 2, na_policy=policy), expected, equal_nan=True
+    )
+
+
+def test_highest_and_stdev_skip():
+    x = [1.0, 3.0, NAN, 2.0]
+    np.testing.assert_array_equal(ta.highest(x, 2, na_policy="skip"), [NAN, 3, 3, 3])
+    np.testing.assert_array_equal(ta.lowest(x, 2, na_policy="skip_na_out"), [NAN, 1, NAN, 2])
+    np.testing.assert_allclose(
+        ta.stdev(x, 2, na_policy="skip"), [NAN, 1.0, 1.0, 0.5], equal_nan=True
+    )
+
+
+@pytest.mark.parametrize("fn", [ta.sma, ta.ema, ta.rma, ta.rsi, ta.stdev, ta.highest, ta.lowest])
+def test_unknown_policy_rejected(fn):
+    with pytest.raises(ValueError, match="na_policy"):
+        fn(np.arange(10.0), 3, na_policy="ignore")
+
+
+@settings(max_examples=examples(40), deadline=None)
+@given(series, lengths)
+def test_policies_identical_on_gap_free_input(x, n):
+    for fn in (ta.sma, ta.ema, ta.rma, ta.rsi, ta.stdev, ta.highest, ta.lowest):
+        ref = fn(x, n)
+        for p in ("skip", "skip_na_out"):
+            np.testing.assert_array_equal(fn(x, n, na_policy=p), ref)
+
+
+# ======================= change / barssince / valuewhen / supertrend =======================
+
+
+def test_change_barssince_valuewhen_hand_values():
+    np.testing.assert_array_equal(ta.change([1.0, 2.0, 4.0, NAN, 5.0]), [NAN, 1, 2, NAN, NAN])
+    np.testing.assert_array_equal(ta.change([1.0, 2.0, 4.0], 2), [NAN, NAN, 3])
+    np.testing.assert_array_equal(ta.barssince([0, 1, 0, 0, 1, 0]), [NAN, 0, 1, 2, 0, 1])
+    np.testing.assert_array_equal(
+        ta.valuewhen([0, 1, 0, 1, 0], [1.0, 2, 3, 4, 5], 1), [NAN, NAN, NAN, 2, 2]
+    )
+    with pytest.raises(ValueError):
+        ta.valuewhen([1], [1.0], -1)
+    with pytest.raises(ValueError):
+        ta.valuewhen([1, 0], [1.0], 0)
+
+
+def test_supertrend_properties():
+    rng = np.random.default_rng(8)
+    c = 100 + np.cumsum(rng.normal(0, 1, 300))
+    h, lo = c + np.abs(rng.normal(0, 0.5, 300)), c - np.abs(rng.normal(0, 0.5, 300))
+    line, d = ta.supertrend(h, lo, c, 3.0, 10)
+    assert set(np.unique(d)) == {-1.0, 1.0}
+    a = ta.atr(h, lo, c, 10)
+    ok = np.arange(300) >= 11
+    up = ok & (d == -1)
+    dn = ok & (d == 1)
+    # Uptrend: the line is a lower band and never sits above that bar's high.
+    assert np.all(line[up] <= h[up])
+    # The line never moves against the trend while the direction is unchanged.
+    same = ok[1:] & (d[1:] == d[:-1]) & ok[:-1]
+    rising_ok = np.where(d[1:] == -1, line[1:] >= line[:-1] - 1e-12, line[1:] <= line[:-1] + 1e-12)
+    assert np.all(rising_ok[same])
+    assert np.all(np.isfinite(line[ok])) and np.isfinite(a[ok]).all()
+    assert dn.any() and up.any()

@@ -2,8 +2,9 @@
 Port TradingView indicators, with a check that the Python output matches Pine bar for bar before you trust it.
 
 **Status:** pre-alpha. Done: bar schema, TradingView CSV loader, fixture manifests, parity
-harness with mutation suite, and `ta.sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`,
-`tr`, `atr`, `crossover`, `crossunder`, and the `pine-lint` repainting check. The built-ins
+harness with mutation suite, `ta.sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`, `tr`,
+`atr`, `crossover`, `crossunder`, `change`, `barssince`, `valuewhen`, `supertrend`, the
+`pine.runtime` bar-by-bar execution model, and the `pine-lint` repainting check. The built-ins
 pass closed-form and property tests but have **not yet been checked against TradingView
 output**; do not rely on them until they have. See [`PINE_PLAN.md`](PINE_PLAN.md).
 
@@ -14,6 +15,9 @@ uv sync
 ```bash
 uv run pytest
 ```
+
+CI runs property tests derandomized (`HYPOTHESIS_PROFILE=ci`) with a branch-coverage floor; a
+weekly job runs them with random seeds and 10× the examples (`HYPOTHESIS_PROFILE=thorough`).
 
 ```python
 from pine.io import load_tradingview_csv
@@ -51,8 +55,72 @@ Each finding says whether the problem is established (`definite`) or whether saf
 be proven (`possible`). Rules and their known blind spots are in
 [`PINE_PLAN.md` §6](PINE_PLAN.md#6-lint-soundness).
 
+Checking `pine.ta` against TradingView (the step that turns "unverified" into "verified"): add
+`tools/reference_capture.pine` to a chart, export chart data, write a manifest from
+`tools/reference_capture.example.yaml`, then:
+
+```bash
+uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml
+```
+
+It reports aligned-mode parity for every core built-in and which `na`-handling hypothesis
+TradingView follows. See [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps).
+
+Porting stateful or conditional logic: write the port in Pine's shape on `pine.runtime`, which
+runs the script bar by bar with Pine's execution model (history per execution, `var`, separate
+state per call site, built-ins that advance only when called):
+
+```python
+from pine.runtime import run
+
+
+def script(ctx):
+    fast = ctx.ta.ema("fast", ctx.close.value, 9)
+    slow = ctx.ta.ema("slow", ctx.close.value, 21)
+    bars_in = ctx.var("bars_in", 0)
+    if ctx.ta.crossover("up", fast, slow):
+        bars_in.set(0)
+    else:
+        bars_in.set(bars_in.value + 1)
+    ctx.plot("bars_in", bars_in.value)
+
+
+result = run(script, exp.bars)
+```
+
+The semantics `pine.runtime` assumes are themselves checked by a second capture script:
+
+```bash
+uv run python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml
+```
+
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
 manifest describing how it was produced; see `src/pine/manifest.py`.
+
+## Known gaps
+
+- **No external verification yet.** Every built-in is checked against closed-form cases and
+  property tests derived from the same reading of the Pine manual; none against TradingView
+  output. Treat results as unverified.
+- **`na` inside windows** may be handled differently by TradingView. Three hypotheses are
+  implemented (`na_policy`); the default `propagate` is unconfirmed until a capture export
+  decides. Gap-free data is unaffected.
+- **Rounded inputs** are accounted for only when asked (`input_rounding=` / `--inputs-rounded`):
+  the allowance is provably sufficient but widens tolerances, so it is off by default.
+- **Lint** traces only simple variables (assigned once at the top level) and sees alert gating
+  only in enclosing `if` blocks, not inside called functions; its precision on real scripts is
+  unmeasured. Parity reports are Markdown or JSON (`to_json()`,
+  `--format json`); HTML is deferred.
+
+- **Complex indicators are not yet supported with a parity guarantee.** `pine.runtime` now
+  provides Pine's bar-by-bar execution model and scalar rules, but those semantics are
+  *expected*, not yet confirmed by a `capture_semantics.pine` export. Still missing: sessions,
+  `request.security`, and most built-ins beyond the ones above. Parity claims cover confirmed historical bars only; live/realtime behaviour cannot
+  be checked from exports.
+
+Ranked next steps: [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps)
+(built-ins and harness) and [§11](PINE_PLAN.md#11-review-3-2026-11-03-from-built-ins-to-complex-indicators)
+(complex indicators: execution model, sessions, multi-timeframe, port acceptance).
 
 ## What "matches" will mean
 
@@ -60,7 +128,9 @@ A port agrees with Pine when, on the same bars from the same first loaded bar: t
 `na` values is identical; every numeric value is within a stated per-column tolerance
 (`atol + rtol·|pine|`); and boolean outputs are identical except at near-ties, which are counted
 and reported. Comparison starts at the first bar where Pine produces a value, so seeding errors
-are not hidden by a warm-up exclusion. The full specification is in
+are not hidden by a warm-up exclusion. Every report also states its minimum detectable error:
+the smallest constant bias (and, for EMA/RMA-type filters, the smallest seed error) that the
+tolerances in force would have caught. The full specification is in
 [`PINE_PLAN.md` §5](PINE_PLAN.md#5-analytical-framework-parity-spec).
 
 `pine.lint` finds known repainting patterns. A clean lint result does not prove that a script

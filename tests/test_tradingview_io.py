@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from hyp import examples
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -95,7 +96,7 @@ def test_malformed_rejected(text, msg):
 finite = st.floats(min_value=-1e9, max_value=1e9, allow_nan=False, allow_subnormal=False)
 
 
-@settings(max_examples=200)
+@settings(max_examples=examples(200))
 @given(st.lists(st.tuples(finite, finite, finite), min_size=1, max_size=30))
 def test_dump_parse_round_trips_any_float64(rows):
     # Exactness property: writing then reading recovers every float64 bit-for-bit.

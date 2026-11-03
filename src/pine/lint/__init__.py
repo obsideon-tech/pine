@@ -17,6 +17,7 @@ from pathlib import Path
 
 from pine.lint._calls import find_calls
 from pine.lint._lexer import LexError, tokenize
+from pine.lint._scope import build_scope
 from pine.lint.rules import RULES, Context, Finding, parse_version
 
 __all__ = ["DISCLAIMER", "Finding", "LexError", "LintReport", "RULES", "lint_file", "lint_source"]
@@ -75,7 +76,8 @@ class LintReport:
 def lint_source(source: str, path: str | None = None) -> LintReport:
     tokens, comments = tokenize(source)
     version, _ = parse_version(comments)
-    ctx = Context(tokens, comments, find_calls(tokens), source.splitlines(), version)
+    lines = source.splitlines()
+    ctx = Context(tokens, comments, find_calls(tokens), lines, version, build_scope(tokens, lines))
 
     suppress: dict[int, set[str]] = {}
     for c in comments:
