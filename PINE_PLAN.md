@@ -568,7 +568,7 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         `check_export` in aligned mode on every row of the §10 A1 matrix, each export with a
         manifest (numbers only or kept local, per the terms item).
       - _Progress 2026-11-03:_ **tooling done** — `tools/reference_capture.pine` (31 plots),
-        `python -m pine.reference EXPORT.csv --manifest EXPORT.yaml`, manifest template
+        `python -m pine.reference` (now via `python -m pine.capture`, docs/CAPTURE.md), manifest template
         `tools/reference_capture.example.yaml`. Consistency tests tie the Pine constants and
         plot titles to `pine.reference`; the script is lint-clean. Synthetic end-to-end tests
         prove the plumbing only. **Remaining: the exports themselves (owner action).**
@@ -703,11 +703,11 @@ any built-in is called "verified":
 Tradeoff: one capture script is fast but couples every built-in to one chart setup; the matrix
 rows compensate. Export terms are still open, so commit numbers only or keep files local.
 
-**How to run A1/A2 (owner):** add `tools/reference_capture.pine` to a chart for one matrix
-row; export chart data with the chart's full loaded history; save the CSV and a manifest
-copied from `tools/reference_capture.example.yaml` locally (not committed until the terms
-item is settled); run `uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml`.
-The output has two parts:
+**How to run A1/A2 and E1 (owner):** follow [`docs/CAPTURE.md`](docs/CAPTURE.md). Both
+capture scripts go on one chart, there is one export, `python -m pine.capture manifest`
+writes the manifest, and `python -m pine.capture check` runs every applicable check into one
+report. (`pine.reference` and `pine.semantics` remain available individually.) The reference
+part of the report has two sections:
 
 - *Gap-free columns* in aligned mode. `src_na` doubles as the history-alignment check
   (§5.4): its gap pattern is keyed to `bar_index`, so a truncated export fails it, and then
@@ -865,8 +865,8 @@ and Python-side competing hypotheses decided by an export (the `na_policy` patte
 
 These probes can go on the same chart and export session as A1/A2.
 
-*Status 2026-11-03: tooling done.* `tools/capture_semantics.pine` + `pine.semantics`
-(`python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml`). 20 probe groups; the expected
+*Status 2026-11-03: tooling done.* `tools/capture_semantics.pine` + `pine.semantics`; run
+through `python -m pine.capture check` per [`docs/CAPTURE.md`](docs/CAPTURE.md). 20 probe groups; the expected
 hypothesis of each (what `pine.runtime` implements) and its alternatives:
 
 | Group | Expected (runtime) | Alternatives |

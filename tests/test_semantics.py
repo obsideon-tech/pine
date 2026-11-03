@@ -170,5 +170,7 @@ def test_cli_json_and_errors(bars, runtime_result, tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert {p["group"] for p in payload} == set(GROUPS) and all(p["ok"] for p in payload)
     assert main([str(GAPPED), "--timeframe", "60"]) == 2
-    with pytest.raises(SystemExit):
-        main([str(path)])
+    assert main([str(path)]) == 2
+    assert main([str(path), "--manifest", str(tmp_path / "EXPORT.yaml")]) == 2
+    err = capsys.readouterr().err
+    assert "manifest not found" in err and "python -m pine.capture manifest" in err

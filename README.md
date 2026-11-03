@@ -55,16 +55,23 @@ Each finding says whether the problem is established (`definite`) or whether saf
 be proven (`possible`). Rules and their known blind spots are in
 [`PINE_PLAN.md` §6](PINE_PLAN.md#6-lint-soundness).
 
-Checking `pine.ta` against TradingView (the step that turns "unverified" into "verified"): add
-`tools/reference_capture.pine` to a chart, export chart data, write a manifest from
-`tools/reference_capture.example.yaml`, then:
+### Run the TradingView capture
+
+This is the step that turns "unverified" into "verified". Put `tools/reference_capture.pine`
+and `tools/capture_semantics.pine` on one chart, export the chart data, then run (with your
+own file name and chart settings):
 
 ```bash
-uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml
+uv run python -m pine.capture manifest ~/Downloads/aapl_1d.csv --symbol NASDAQ:AAPL --timeframe 1D --timezone America/New_York
 ```
 
-It reports aligned-mode parity for every core built-in and which `na`-handling hypothesis
-TradingView follows. See [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps).
+```bash
+uv run python -m pine.capture check ~/Downloads/aapl_1d.csv --out ~/Downloads/aapl_1d_report.md
+```
+
+The report covers parity for every core built-in, the `na`-handling decision, and the Pine
+execution semantics `pine.runtime` assumes. Step-by-step guide, including where the menus are
+and how to read the report: [`docs/CAPTURE.md`](docs/CAPTURE.md).
 
 Porting stateful or conditional logic: write the port in Pine's shape on `pine.runtime`, which
 runs the script bar by bar with Pine's execution model (history per execution, `var`, separate
@@ -88,11 +95,8 @@ def script(ctx):
 result = run(script, exp.bars)
 ```
 
-The semantics `pine.runtime` assumes are themselves checked by a second capture script:
-
-```bash
-uv run python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml
-```
+The semantics `pine.runtime` assumes are checked by the second capture script (see
+[`docs/CAPTURE.md`](docs/CAPTURE.md)).
 
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
 manifest describing how it was produced; see `src/pine/manifest.py`.

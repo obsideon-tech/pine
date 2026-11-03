@@ -9,8 +9,10 @@ Two questions, answered separately:
 
 Command line::
 
-    python -m pine.reference EXPORT.csv --manifest EXPORT.yaml
-    python -m pine.reference EXPORT.csv --timeframe 60 --tz America/New_York
+    python -m pine.reference aapl_1d.csv --manifest aapl_1d.yaml
+    python -m pine.reference aapl_1d.csv --timeframe 1D --tz America/New_York
+
+Usually run through ``python -m pine.capture check`` (docs/CAPTURE.md).
 
 Exit status: 0 if every gap-free column passes and every ``*_na`` column matches exactly one
 policy; 1 otherwise; 2 on input errors.
@@ -27,9 +29,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from pine import ta
+from pine._cli import InputError, load_export
 from pine.bars import Bars
-from pine.io import TradingViewExport, load_tradingview_csv
-from pine.manifest import load_manifest
+from pine.io import TradingViewExport
 from pine.parity import ParityReport, PortSpec, check_export, crossover_excuse, tolerance_for
 from pine.sensitivity import LIPSCHITZ, input_rounding, rsi_input_error, stdev_lipschitz
 
@@ -223,18 +225,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--format", choices=("md", "json"), default="md")
     args = ap.parse_args(argv)
     try:
-        if args.manifest:
-            m = load_manifest(args.manifest)
-            timeframe, tz = m.timeframe, m.timezone
-        else:
-            if not args.timeframe:
-                ap.error("--timeframe is required without --manifest")
-            timeframe, tz = args.timeframe, args.tz or "UTC"
-        exp = load_tradingview_csv(args.export, timeframe=timeframe, session_tz=tz)
+        exp, _ = load_export(args.export, args.manifest, args.timeframe, args.tz)
         missing = [c for c in PLOT_TITLES if c not in exp.columns]
         if missing:
             raise KeyError(f"export lacks capture columns {missing}; is this the capture script?")
-    except (OSError, ValueError, KeyError) as exc:
+    except (InputError, OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     delta = ohlc_rounding(exp) if args.inputs_rounded else None

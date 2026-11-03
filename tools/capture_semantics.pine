@@ -7,8 +7,10 @@
 // valuewhen, change around na, and three stateful ports (Supertrend, a ratcheting stop, a
 // regime state machine). Self-written and public.
 //
-// Use: add to a chart, "Export chart data..." with the full loaded history, then
-//   uv run python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml
+// Use: put this and tools/reference_capture.pine on one chart, export chart data, and run
+//   uv run python -m pine.capture manifest <your.csv> --symbol ... --timeframe ... --timezone ...
+//   uv run python -m pine.capture check <your.csv>
+// Step-by-step guide: docs/CAPTURE.md
 //
 // Plot titles and constants must match src/pine/semantics.py (tests/test_semantics.py).
 // TradingView will warn that some ta.* calls are not executed on every bar: that is the point.

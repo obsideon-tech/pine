@@ -8,7 +8,9 @@ hypotheses an export matches; `runtime_capture` re-implements the whole capture 
 
 Command line::
 
-    python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml [--format md|json]
+    python -m pine.semantics aapl_1d.csv --manifest aapl_1d.yaml [--format md|json]
+
+Usually run through ``python -m pine.capture check`` (docs/CAPTURE.md).
 
 Exit status: 0 if every group matches exactly its expected hypothesis; 1 if any group matches
 another hypothesis, several, or none (the runtime or the expectation must change); 2 on input
@@ -27,9 +29,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from pine import ta
+from pine._cli import InputError, load_export
 from pine.bars import Bars
-from pine.io import TradingViewExport, load_tradingview_csv
-from pine.manifest import load_manifest
+from pine.io import TradingViewExport
 from pine.parity import ParityReport, PortSpec, check_export
 from pine.runtime import Context
 from pine.runtime import scalar as ps
@@ -485,18 +487,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--format", choices=("md", "json"), default="md")
     args = ap.parse_args(argv)
     try:
-        if args.manifest:
-            m = load_manifest(args.manifest)
-            timeframe, tz = m.timeframe, m.timezone
-        else:
-            if not args.timeframe:
-                ap.error("--timeframe is required without --manifest")
-            timeframe, tz = args.timeframe, args.tz or "UTC"
-        exp = load_tradingview_csv(args.export, timeframe=timeframe, session_tz=tz)
+        exp, _ = load_export(args.export, args.manifest, args.timeframe, args.tz)
         missing = [c for c in COLUMNS if c not in exp.columns]
         if missing:
             raise KeyError(f"export lacks semantics columns {missing}")
-    except (OSError, ValueError, KeyError) as exc:
+    except (InputError, OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     decisions = decide(exp)

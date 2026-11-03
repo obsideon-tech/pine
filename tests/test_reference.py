@@ -132,9 +132,9 @@ def test_cli_exit_codes(tmp_path, capsys):
     assert main([str(GAPPED), "--timeframe", "60"]) == 2  # not a capture export
 
 
-def test_cli_requires_timeframe_without_manifest(tmp_path):
-    with pytest.raises(SystemExit):
-        main([str(synthetic_export("skip", tmp_path))])
+def test_cli_requires_timeframe_without_manifest(tmp_path, capsys):
+    assert main([str(synthetic_export("skip", tmp_path))]) == 2
+    assert "python -m pine.capture manifest" in capsys.readouterr().err
 
 
 def test_manifest_template_is_valid_and_matches_constants():

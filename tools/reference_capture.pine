@@ -6,7 +6,7 @@
 // handled (§10 A2). Self-written and public; contains no proprietary logic.
 //
 // Use: add to a chart, then "Export chart data..." with the chart's full loaded history.
-// Check with:  uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml
+// Check with:  uv run python -m pine.capture check <your.csv>   (guide: docs/CAPTURE.md)
 //
 // Plot titles become export column names. Titles and constants must match
 // src/pine/reference.py; tests/test_reference.py enforces this.
