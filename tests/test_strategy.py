@@ -217,3 +217,26 @@ def test_mid_history_export_syncs_at_first_flat_bar(tmp_path):
     decisions = decide(_export(_long_bars(), StrategyConfig(), tmp_path, k=517))
     assert all(d.ok for d in decisions)
     assert decisions[0].sync_row == (39 - 517) % 40
+
+
+def test_live_last_bar_with_empty_strategy_columns_is_dropped(tmp_path):
+    bars = _long_bars(n=400)
+    exp = _export(bars, StrategyConfig(), tmp_path)
+    cols = {c: np.array(v) for c, v in exp.columns.items()}
+    for c in COLUMNS:
+        cols[c][-1] = np.nan  # strategy not yet calculated on the live bar
+    live = TradingViewExport(exp.bars, cols, exp.header, exp.time_format)
+    decisions = decide(live)
+    assert all(d.matching == (d.expected,) for d in decisions)
+    assert decisions[0].dropped_live_bar
+    from pine.strategy_capture import summary
+
+    assert "Last row dropped" in summary(decisions)
+
+
+def test_na_strategy_bar_index_elsewhere_is_still_an_error(tmp_path):
+    exp = _export(_long_bars(n=400), StrategyConfig(), tmp_path)
+    cols = {c: np.array(v) for c, v in exp.columns.items()}
+    cols["strat_bar_index"][100] = np.nan
+    with pytest.raises(ValueError, match="strat_bar_index: na at row 100"):
+        decide(TradingViewExport(exp.bars, cols, exp.header, exp.time_format))

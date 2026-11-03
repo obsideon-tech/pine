@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
+from pine.bars import Bars
 from pine.io import TradingViewExport
 from pine.parity import ParityReport, PortSpec, check_export
 from pine.runtime import Context, run
@@ -92,6 +93,7 @@ class StrategyDecision:
     matching: tuple[str, ...]
     reports: dict[str, ParityReport]
     sync_row: int
+    dropped_live_bar: bool = False
 
     @property
     def undecided(self) -> bool:
@@ -107,7 +109,22 @@ def _columns(export: TradingViewExport, cfg: StrategyConfig, k: int) -> dict[str
     return {c: np.asarray(res[c]) for c in COLUMNS}
 
 
+def _drop_live_bar(export: TradingViewExport) -> tuple[TradingViewExport, bool]:
+    """Strategies (``calc_on_every_tick = false``) run on the live bar only when it closes, so
+    an export taken mid-bar has every strategy column ``na`` on its last row while indicators
+    have values. Drop that row; any other ``na`` is left for `bar_offset` to report."""
+    if len(export.bars) < 2 or not all(np.isnan(export.columns[c][-1]) for c in COLUMNS):
+        return export, False
+    b = export.bars
+    sl = slice(0, -1)
+    bars = Bars(b.ts[sl], b.open[sl], b.high[sl], b.low[sl], b.close[sl], b.volume[sl],
+                timeframe=b.timeframe, session_tz=b.session_tz, symbol=b.symbol)  # fmt: skip
+    cols = {c: np.asarray(v)[sl] for c, v in export.columns.items()}
+    return replace(export, bars=bars, columns=cols), True
+
+
 def decide(export: TradingViewExport) -> list[StrategyDecision]:
+    export, dropped = _drop_live_bar(export)
     k = bar_offset(export.columns, "strat_bar_index") or 0
     n = len(export.bars)
     cycle = int(CONSTANTS["CYCLE"])
@@ -132,7 +149,7 @@ def decide(export: TradingViewExport) -> list[StrategyDecision]:
             }
             reports[name] = check_export(export, specs)
         matching = tuple(h for h, r in reports.items() if r.passed)
-        out.append(StrategyDecision(group, EXPECTED_HYP[group], matching, reports, sync))
+        out.append(StrategyDecision(group, EXPECTED_HYP[group], matching, reports, sync, dropped))
     return out
 
 
@@ -164,6 +181,9 @@ def summary(decisions: list[StrategyDecision]) -> str:
     if sync:
         lines += ["", f"Export starts mid-history: compared from row {sync} (first flat bar); "
                   "cumulative columns anchored there."]  # fmt: skip
+    if decisions and decisions[0].dropped_live_bar:
+        lines += ["", "Last row dropped: the last bar was live and a strategy calculates only on "
+                  "bar close, so its columns were empty there."]  # fmt: skip
     bad = [d.group for d in decisions if not d.ok]
     lines += [
         "",
