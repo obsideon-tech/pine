@@ -149,3 +149,19 @@ def test_cli_inputs_rounded_adds_allowance(tmp_path, capsys):
     assert main([str(path), "--manifest", str(MANIFEST), "--inputs-rounded"]) == 0
     out = capsys.readouterr().out
     assert "inputs assumed rounded to ±0.005" in out
+
+
+def test_capture_crossovers_are_discrete_and_json_cli(tmp_path, capsys):
+    import json
+
+    path = synthetic_export("propagate", tmp_path)
+    exp = load_tradingview_csv(path, timeframe="60")
+    rep = check_capture(exp)
+    assert [d.name for d in rep.discrete] == ["crossover", "crossunder"]
+    assert all(d.passed for d in rep.discrete)
+    ema = next(c for c in rep.columns if c.name == "ema")
+    assert ema.mde_seed is not None and ema.mde_seed < 1e-6
+    assert main([str(path), "--timeframe", "60", "--format", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["parity"]["passed"] is True
+    assert {d["decided"] for d in payload["na_policy"]} == {"propagate"}

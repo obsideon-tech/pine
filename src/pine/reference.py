@@ -19,6 +19,7 @@ policy; 1 otherwise; 2 on input errors.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,7 +30,7 @@ from pine import ta
 from pine.bars import Bars
 from pine.io import TradingViewExport, load_tradingview_csv
 from pine.manifest import load_manifest
-from pine.parity import ParityReport, PortSpec, Tolerance, check_export
+from pine.parity import ParityReport, PortSpec, check_export, crossover_excuse, tolerance_for
 from pine.sensitivity import LIPSCHITZ, input_rounding, rsi_input_error, stdev_lipschitz
 
 __all__ = [
@@ -47,7 +48,6 @@ __all__ = [
 # Must match tools/reference_capture.pine (enforced by tests/test_reference.py).
 CONSTANTS = {"LEN": 14, "HL_LEN": 20, "FAST": 9, "SLOW": 21, "GAP_PERIOD": 50, "GAP_WIDTH": 3}
 LEN, HL_LEN = CONSTANTS["LEN"], CONSTANTS["HL_LEN"]
-_EXACT = Tolerance(atol=0.0, rtol=0.0)
 
 
 def _col(export: TradingViewExport, name: str) -> np.ndarray:
@@ -62,17 +62,21 @@ def _src_na_expected(b: Bars) -> np.ndarray:
 
 def _gapfree_specs(export: TradingViewExport) -> dict[str, PortSpec]:
     """Port for each gap-free column. Crossover columns use the exported EMAs as inputs, so
-    they test crossover logic alone; until §10 B2 lands they are compared as exact 0/1
-    numbers (no near-tie excuse)."""
+    they test crossover logic alone, and are compared as discrete columns with the two-bar
+    near-tie excuse (§5.5). ``alpha`` is set on seeded recursive filters for ``mde_seed``."""
 
     def cross(fn):
-        return lambda b: fn(_col(export, "ema_fast"), _col(export, "ema_slow")).astype(float)
+        return lambda b: fn(_col(export, "ema_fast"), _col(export, "ema_slow"))
+
+    def excuse(b):
+        tie_tol = tolerance_for("price", export.observed_decimals.get("ema_fast"))
+        return crossover_excuse(_col(export, "ema_fast"), _col(export, "ema_slow"), tie_tol)
 
     L = LIPSCHITZ
     return {
         "sma": PortSpec(lambda b: ta.sma(b.close, LEN), input_error=L["sma"]),
-        "ema": PortSpec(lambda b: ta.ema(b.close, LEN), input_error=L["ema"]),
-        "rma": PortSpec(lambda b: ta.rma(b.close, LEN), input_error=L["rma"]),
+        "ema": PortSpec(lambda b: ta.ema(b.close, LEN), input_error=L["ema"], alpha=2 / (LEN + 1)),
+        "rma": PortSpec(lambda b: ta.rma(b.close, LEN), input_error=L["rma"], alpha=1 / LEN),
         "rsi": PortSpec(
             lambda b: ta.rsi(b.close, LEN),
             kind="bounded",
@@ -85,20 +89,26 @@ def _gapfree_specs(export: TradingViewExport) -> dict[str, PortSpec]:
         ),
         "highest": PortSpec(lambda b: ta.highest(b.high, HL_LEN), input_error=L["highest"]),
         "lowest": PortSpec(lambda b: ta.lowest(b.low, HL_LEN), input_error=L["lowest"]),
-        "atr": PortSpec(lambda b: ta.atr(b.high, b.low, b.close, LEN), input_error=L["atr"]),
+        "atr": PortSpec(
+            lambda b: ta.atr(b.high, b.low, b.close, LEN), input_error=L["atr"], alpha=1 / LEN
+        ),
         "tr": PortSpec(lambda b: ta.tr(b.high, b.low, b.close), input_error=L["tr"]),
         "tr_handle_na": PortSpec(
             lambda b: ta.tr(b.high, b.low, b.close, handle_na=True), input_error=L["tr"]
         ),
-        "ema_fast": PortSpec(lambda b: ta.ema(b.close, CONSTANTS["FAST"]), input_error=1.0),
-        "ema_slow": PortSpec(lambda b: ta.ema(b.close, CONSTANTS["SLOW"]), input_error=1.0),
+        "ema_fast": PortSpec(
+            lambda b: ta.ema(b.close, CONSTANTS["FAST"]),
+            input_error=1.0,
+            alpha=2 / (CONSTANTS["FAST"] + 1),
+        ),
+        "ema_slow": PortSpec(
+            lambda b: ta.ema(b.close, CONSTANTS["SLOW"]),
+            input_error=1.0,
+            alpha=2 / (CONSTANTS["SLOW"] + 1),
+        ),
         # Crossovers use the exported EMAs, not the rounded prices: no input allowance.
-        "crossover": PortSpec(
-            cross(ta.crossover), kind="unbounded", tolerance=_EXACT, input_error=0.0
-        ),
-        "crossunder": PortSpec(
-            cross(ta.crossunder), kind="unbounded", tolerance=_EXACT, input_error=0.0
-        ),
+        "crossover": PortSpec(cross(ta.crossover), kind="discrete", excuse=excuse),
+        "crossunder": PortSpec(cross(ta.crossunder), kind="discrete", excuse=excuse),
         # Alignment check (§5.4): the gap pattern depends on bar_index, so this column only
         # matches if the export starts on the chart's first loaded bar. It is the exported
         # close itself on both sides, so rounding cancels.
@@ -210,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         help="OHLC in the export are rounded beyond the instrument's tick (e.g. dividend-"
         "adjusted); add the input-rounding allowance from the printed OHLC precision",
     )
+    ap.add_argument("--format", choices=("md", "json"), default="md")
     args = ap.parse_args(argv)
     try:
         if args.manifest:
@@ -229,7 +240,17 @@ def main(argv: list[str] | None = None) -> int:
     delta = ohlc_rounding(exp) if args.inputs_rounded else None
     report = check_capture(exp, input_rounding=delta)
     decisions = decide_na_policy(exp, input_rounding=delta)
-    sys.stdout.write(_summary(report, decisions))
+    if args.format == "json":
+        payload = {
+            "parity": report.to_dict(),
+            "na_policy": [
+                {"column": d.column, "matching": list(d.matching), "decided": d.decided}
+                for d in decisions
+            ],
+        }
+        print(json.dumps(payload, indent=2, allow_nan=False))
+    else:
+        sys.stdout.write(_summary(report, decisions))
     ok = report.passed and all(d.decided for d in decisions)
     return 0 if ok else 1
 

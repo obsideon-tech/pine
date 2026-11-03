@@ -140,7 +140,9 @@ Booleans and categorical outputs (`ta.crossover`, Supertrend direction, signal f
 compared exactly. A mismatch is **excused** only if the continuous inputs to the decision
 are within tolerance of the tie (e.g. `|a − b| ≤ atol + rtol·|b|` for a crossover of `a` over
 `b`). For crossovers the decision at bar `t` uses bars `t` **and** `t−1`, so the excuse mask is
-`crossover_excuse(a, b, tol)` = near-tie at `t` or `t−1` (`near_tie` alone covers only `t`). Excused flips are counted and listed in the report, never silently passed.
+`crossover_excuse(a, b, tol)` = near-tie at `t` or `t−1` (`near_tie` alone covers only `t`).
+`check_export` checks exported 0/1 columns with `PortSpec(kind="discrete", excuse=...)`; `na` in
+an exported discrete column reads as false and is noted. Excused flips are counted and listed in the report, never silently passed.
 State that depends on a flipped decision (e.g. Supertrend after a direction change) is
 re-synchronised to Pine's value for the next comparison, and the re-sync is reported.
 
@@ -159,6 +161,25 @@ Per column: mode (§5.3), bars compared, bars excluded, na-mask mismatches, firs
 bar (index and timestamp), max absolute error and its bar, max relative error, RMSE, share of
 bars within tolerance, excused discrete flips. A mean error is never reported on its own — it
 hides the localised errors that matter most (seeding, regime changes).
+
+**Minimum detectable error** (implemented 2026-11-03). Every column also states what a pass
+could *not* have seen. With `B_t = atol_t + rtol·|pine_t|` and `C` the compared bars:
+
+- `mde_offset = min_{t∈C} B_t`: a constant bias below this passes on every bar.
+- `mde_seed = min_{t∈C} B_t / (1−α)^(t−w)` for seeded recursive filters given `alpha`
+  (`w` = the reference's first valid bar): a seed error below this decays inside the tolerance
+  everywhere. In aligned mode it is about `B_w`; in convergence mode it grows like
+  `B/(1−α)^(exclude−w)` — the §5.3 hazard as a number (> 10⁶× the aligned value for EMA(14)
+  with 150 bars excluded, per test). Not given for RSI, whose seed errors live in the up/down
+  averages rather than RSI units.
+
+Magnitude sweeps confirm both thresholds (an injected error at 0.5× passes, at 2× fails) for
+EMA, RMA, ATR and SMA. The MDE makes tradeoffs visible: the A3 input allowance raises
+`mde_offset` for SMA from ~1e-7 to ≥ 0.005 at two-decimal inputs, and a column printed with two
+decimals cannot detect anything below 0.005 regardless of the port.
+
+Reports are available as Markdown (`to_markdown`) and standard JSON (`to_dict`/`to_json`;
+per-bar `atol` summarised as `{"max", "per_bar"}`, infinities as `null`).
 
 ### 5.8 Independent oracles: the two-oracle rule
 
@@ -500,19 +521,16 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       `pine.sensitivity` bounds (§5.1), per-bar `Tolerance.atol`, `PortSpec.input_error`,
       `check_export(..., input_rounding=δ)` (opt-in), `--inputs-rounded` in `pine.reference`
       (also applied to the na-policy decision). Sound and tight per tests.
-- [ ] **[high] A4 — Minimum detectable error in reports** (§10 A4)
-      - _Raised:_ 2026-11-03
-      - _Why:_ a pass without a sensitivity statement overstates what was shown.
-      - _Done when:_ each `ColumnReport` states its seed-error detection threshold, and a
-        magnitude sweep in the mutation suite confirms it.
+- [x] **[high] A4 — Minimum detectable error in reports** (§10 A4) — done 2026-11-03:
+      `mde_offset` on every column, `mde_seed` where `alpha` is given (§5.7); sweeps at 0.5×/2×
+      confirm both for EMA, RMA, ATR, SMA (`tests/test_mde.py`).
 - [x] **[high] B1 — Two-bar crossover excuse** (§10 B1) — done 2026-11-03:
       `pine.parity.crossover_excuse`; a flip caused by a tie at t−1 fails with `near_tie` and
       passes with it; real flips and NaN inputs are not excused.
-- [ ] **[med] B2 — Discrete columns in `check_export`; JSON parity report** (§10 B2)
-      - _Raised:_ 2026-11-03
-      - _Why:_ exported signal columns cannot be checked today; consumers' CI needs JSON.
-      - _Done when:_ `PortSpec(kind="discrete")` routes to `compare_discrete`;
-        `ParityReport.to_dict()` exists.
+- [x] **[med] B2 — Discrete columns in `check_export`; JSON parity report** (§10 B2) — done
+      2026-11-03: `PortSpec(kind="discrete", excuse=...)`, `ParityReport.to_dict/to_json`,
+      `python -m pine.reference --format json`; capture crossovers now use the two-bar excuse
+      on the exported EMAs.
 - [ ] **[med] B3 — Composite convergence bounds for RSI and ATR** (§10 B3)
       - _Raised:_ 2026-11-03
       - _Why:_ `convergence_bars` covers one filter; RSI/ATR compose filters with windows.
@@ -630,7 +648,8 @@ seed bar, so the report states "seed errors below `tol(w)` are undetectable". In
 mode, `e₀·(1−α)^exclude` must exceed `tol` — usually impossible by construction, which is
 the §5.3 hazard stated as a number. Extend the mutation suite with a magnitude sweep (seed
 error at 0.1×, 1×, 10× the tolerance) confirming the stated threshold. Tradeoff: reports get
-longer; the alternative is a pass that implies more than it shows.
+longer; the alternative is a pass that implies more than it shows. *Status 2026-11-03: done
+(§5.7).*
 
 ### B. Harness correctness
 
@@ -642,7 +661,7 @@ use it in examples and tests. *Status 2026-11-03: done.*
 **B2. Discrete columns and machine-readable reports.** `PortSpec` accepts numeric kinds only,
 so an exported 0/1 signal column cannot be checked by `check_export`. Add `kind="discrete"`
 routed to `compare_discrete`, and `ParityReport.to_dict()`/JSON so downstream CI can gate on
-results without parsing Markdown. HTML stays deferred.
+results without parsing Markdown. HTML stays deferred. *Status 2026-11-03: done.*
 
 **B3. Composite convergence.** `convergence_bars` covers a single filter. For RSI (two RMAs of
 a differenced series) and ATR (RMA of true range), the bound is the slowest internal filter's

@@ -20,6 +20,7 @@ Boolean outputs use `compare_discrete` (§5.5).
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -148,6 +149,11 @@ class ColumnReport:
     within_tol_share: float
     first_divergence_ts: int | None = None
     notes: tuple[str, ...] = ()
+    mde_offset: float = math.inf
+    """Smallest constant error that would fail: ``min B_t`` over compared bars (§5.7)."""
+    mde_seed: float | None = None
+    """Smallest seed error a filter with the given ``alpha`` would show (§5.7); ``None`` when
+    no ``alpha`` was given."""
 
     @property
     def first_divergence(self) -> int | None:
@@ -176,8 +182,14 @@ def compare_series(
     mode: Mode = "aligned",
     exclude: int = 0,
     ts: ArrayLike | None = None,
+    alpha: float | None = None,
 ) -> ColumnReport:
-    """Compare one numeric output column. ``pine`` is the reference."""
+    """Compare one numeric output column. ``pine`` is the reference.
+
+    ``alpha``: smoothing factor if the column is a seeded recursive filter (EMA ``2/(n+1)``,
+    RMA/ATR ``1/n``); enables ``mde_seed``. Not meaningful for RSI, whose seed errors enter
+    through the up/down averages rather than in RSI units.
+    """
     p = _as_1d("py", py)
     r = _as_1d("pine", pine)
     if p.size != r.size:
@@ -198,7 +210,9 @@ def compare_series(
 
     err = np.zeros(p.size)
     err[both] = np.abs(p[both] - r[both])
-    fail = both & (err > tol.bound(np.where(both, r, 0.0)))
+    bound = np.broadcast_to(tol.bound(np.where(both, r, 0.0)), p.shape)
+    fail = both & (err > bound)
+    mde_offset, mde_seed = _mde(bound, both, ~na_r, alpha)
 
     nonzero = both & (r != 0)
     rel = np.zeros(p.size)
@@ -230,11 +244,45 @@ def compare_series(
         rmse=float(np.sqrt(np.mean(err[both] ** 2))) if n_cmp else 0.0,
         within_tol_share=float(1 - fail.sum() / n_cmp) if n_cmp else 1.0,
         notes=tuple(notes),
+        mde_offset=mde_offset,
+        mde_seed=mde_seed,
     )
     fd = report.first_divergence
     if ts_arr is not None and fd is not None:
         object.__setattr__(report, "first_divergence_ts", int(ts_arr[fd]))
     return report
+
+
+def _mde(
+    bound: np.ndarray, compared: np.ndarray, ref_valid: np.ndarray, alpha: float | None
+) -> tuple[float, float | None]:
+    """Minimum detectable errors (§5.7).
+
+    - offset: a constant error ``c`` fails iff ``c > B_t`` at some compared bar.
+    - seed: a seed error ``e0`` at the reference's first valid bar ``w`` appears as
+      ``e0 (1-alpha)^(t-w)``; it fails iff ``e0 > min_t B_t / (1-alpha)^(t-w)``.
+    """
+    if not compared.any():
+        return math.inf, (None if alpha is None else math.inf)
+    offset = float(np.min(bound[compared]))
+    if alpha is None:
+        return offset, None
+    if not 0 < alpha <= 1:
+        raise ValueError("alpha must be in (0, 1]")
+    w = int(np.flatnonzero(ref_valid)[0])
+    t = np.flatnonzero(compared)
+    if alpha == 1:
+        # The seed error vanishes after the seed bar: detectable only there.
+        return offset, float(bound[w]) if compared[w] else math.inf
+    with np.errstate(over="ignore"):
+        thresholds = bound[t] / (1 - alpha) ** (t - w).astype(float)
+    return offset, float(np.min(thresholds))
+
+
+def _fmt_mde(x: float | None) -> str:
+    if x is None:
+        return "—"
+    return "n/a" if math.isinf(x) else f"{x:.3g}"
 
 
 def format_atol(atol: float | np.ndarray) -> str:
@@ -273,6 +321,7 @@ class DiscreteReport:
     excused_bars: tuple[int, ...]
     first_unexcused: int | None
     first_unexcused_ts: int | None = None
+    notes: tuple[str, ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -314,7 +363,7 @@ class PortSpec:
     """How to check one exported column: ``fn(bars) -> values`` and the comparison setup."""
 
     fn: Callable[[Bars], ArrayLike]
-    kind: Kind = "price"
+    kind: Kind | Literal["discrete"] = "price"
     mode: Mode = "aligned"
     exclude: int = 0
     tolerance: Tolerance | None = None
@@ -322,6 +371,10 @@ class PortSpec:
     """Output error caused by inputs rounded to ``±δ`` (§5.1, `pine.sensitivity`): a float is
     the sensitivity ``L`` (error ``L·δ``); a callable ``(bars, δ)`` returns per-bar error.
     ``None``: unknown, and `check_export` refuses ``input_rounding`` for this column."""
+    alpha: float | None = None
+    """Smoothing factor of a seeded recursive filter; enables ``mde_seed`` (§5.7)."""
+    excuse: Callable[[Bars], ArrayLike] | None = None
+    """``kind="discrete"`` only: bars where a mismatch is excused (e.g. `crossover_excuse`)."""
 
 
 @dataclass(frozen=True)
@@ -338,8 +391,9 @@ class ParityReport:
             f"**Parity: {'PASS' if self.passed else 'FAIL'}**",
             "",
             "| column | kind | mode | compared | excluded | na mismatches | first divergence "
-            "| max abs err (bar) | max rel err | RMSE | within tol | atol / rtol | result |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "| max abs err (bar) | max rel err | RMSE | within tol | atol / rtol "
+            "| MDE offset / seed | result |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for c in self.columns:
             fd = (
@@ -352,18 +406,75 @@ class ParityReport:
                 f"| {c.na_mismatches} | {fd} | {c.max_abs_err:.3g} ({c.max_abs_err_bar}) "
                 f"| {c.max_rel_err:.3g} | {c.rmse:.3g} | {c.within_tol_share:.2%} "
                 f"| {format_atol(c.tolerance.atol)} / {c.tolerance.rtol:.3g} "
+                f"| {_fmt_mde(c.mde_offset)} / {_fmt_mde(c.mde_seed)} "
                 f"| {'pass' if c.passed else 'FAIL'} |"
             )
         for d in self.discrete:
             lines.append(
                 f"| {d.name} | discrete | aligned | {d.n_bars} | 0 | — "
                 f"| {'—' if d.first_unexcused is None else d.first_unexcused} | — | — | — "
-                f"| excused flips: {d.excused} | — | {'pass' if d.passed else 'FAIL'} |"
+                f"| excused flips: {d.excused} | — | — | {'pass' if d.passed else 'FAIL'} |"
             )
-        notes = [n for c in self.columns for n in c.notes]
+        notes = [n for c in (*self.columns, *self.discrete) for n in c.notes]
         if notes:
             lines += ["", *(f"- {n}" for n in dict.fromkeys(notes))]
         return "\n".join(lines) + "\n"
+
+    def to_dict(self) -> dict:
+        """JSON-safe dict: per-bar ``atol`` summarised, ``inf`` as ``None``."""
+
+        def num(x):
+            return None if x is None or (isinstance(x, float) and math.isinf(x)) else x
+
+        cols = []
+        for c in self.columns:
+            atol = c.tolerance.atol
+            atol_d = (
+                float(atol) if np.ndim(atol) == 0 else {"max": float(np.max(atol)), "per_bar": True}
+            )
+            cols.append(
+                {
+                    "name": c.name,
+                    "kind": c.kind,
+                    "mode": c.mode,
+                    "passed": c.passed,
+                    "n_bars": c.n_bars,
+                    "n_compared": c.n_compared,
+                    "n_excluded": c.n_excluded,
+                    "na_mismatches": c.na_mismatches,
+                    "first_divergence": c.first_divergence,
+                    "divergence_type": c.divergence_type,
+                    "first_divergence_ts": c.first_divergence_ts,
+                    "max_abs_err": c.max_abs_err,
+                    "max_abs_err_bar": c.max_abs_err_bar,
+                    "max_rel_err": c.max_rel_err,
+                    "rmse": c.rmse,
+                    "within_tol_share": c.within_tol_share,
+                    "atol": atol_d,
+                    "rtol": c.tolerance.rtol,
+                    "mde_offset": num(c.mde_offset),
+                    "mde_seed": num(c.mde_seed),
+                    "notes": list(c.notes),
+                }
+            )
+        disc = [
+            {
+                "name": d.name,
+                "passed": d.passed,
+                "n_bars": d.n_bars,
+                "mismatches": d.mismatches,
+                "excused": d.excused,
+                "excused_bars": list(d.excused_bars),
+                "first_unexcused": d.first_unexcused,
+                "first_unexcused_ts": d.first_unexcused_ts,
+                "notes": list(d.notes),
+            }
+            for d in self.discrete
+        ]
+        return {"passed": self.passed, "columns": cols, "discrete": disc}
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, allow_nan=False)
 
 
 def check_export(
@@ -385,8 +496,11 @@ def check_export(
         raise KeyError(f"columns not in export: {missing}; available: {list(export.columns)}")
     if input_rounding is not None and input_rounding < 0:
         raise ValueError("input_rounding must be non-negative")
-    reports = []
+    reports, discrete = [], []
     for col, spec in specs.items():
+        if spec.kind == "discrete":
+            discrete.append(_check_discrete(export, col, spec))
+            continue
         tol = spec.tolerance or tolerance_for(spec.kind, export.observed_decimals.get(col))
         note = None
         if input_rounding is not None:
@@ -410,8 +524,23 @@ def check_export(
             mode=spec.mode,
             exclude=spec.exclude,
             ts=export.bars.ts,
+            alpha=spec.alpha,
         )
         if note:
             rep = replace(rep, notes=(*rep.notes, note))
         reports.append(rep)
-    return ParityReport(columns=tuple(reports))
+    return ParityReport(columns=tuple(reports), discrete=tuple(discrete))
+
+
+def _check_discrete(export, col: str, spec: PortSpec) -> DiscreteReport:
+    """Exported 0/1 column vs a boolean port (§5.5). NaN in the export reads as False."""
+    raw = np.asarray(export.columns[col], dtype=np.float64)
+    nan = np.isnan(raw)
+    pine = ~nan & (raw != 0)
+    py = np.asarray(spec.fn(export.bars))
+    py = py.astype(bool) if py.dtype == bool else (~np.isnan(py.astype(float)) & (py != 0))
+    excuse = None if spec.excuse is None else spec.excuse(export.bars)
+    rep = compare_discrete(py, pine, name=col, excuse=excuse, ts=export.bars.ts)
+    if nan.any():
+        rep = replace(rep, notes=(f"{col}: {int(nan.sum())} na value(s) in export read as false",))
+    return rep

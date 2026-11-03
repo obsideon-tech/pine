@@ -76,7 +76,8 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 - **Rounded inputs** are accounted for only when asked (`input_rounding=` / `--inputs-rounded`):
   the allowance is provably sufficient but widens tolerances, so it is off by default.
 - **Lint** does not trace user variables or resolve `if` blocks for alert gating; its precision
-  on real scripts is unmeasured. Parity reports are Markdown only.
+  on real scripts is unmeasured. Parity reports are Markdown or JSON (`to_json()`,
+  `--format json`); HTML is deferred.
 
 Ranked next steps: [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps).
 
@@ -86,7 +87,9 @@ A port agrees with Pine when, on the same bars from the same first loaded bar: t
 `na` values is identical; every numeric value is within a stated per-column tolerance
 (`atol + rtol·|pine|`); and boolean outputs are identical except at near-ties, which are counted
 and reported. Comparison starts at the first bar where Pine produces a value, so seeding errors
-are not hidden by a warm-up exclusion. The full specification is in
+are not hidden by a warm-up exclusion. Every report also states its minimum detectable error:
+the smallest constant bias (and, for EMA/RMA-type filters, the smallest seed error) that the
+tolerances in force would have caught. The full specification is in
 [`PINE_PLAN.md` §5](PINE_PLAN.md#5-analytical-framework-parity-spec).
 
 `pine.lint` finds known repainting patterns. A clean lint result does not prove that a script

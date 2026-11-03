@@ -176,3 +176,75 @@ def test_crossover_excuse_does_not_excuse_real_flips():
     b = np.zeros(5)
     ex = crossover_excuse(a, b, Tolerance(1e-9, 0))
     assert not ex.any()
+
+
+# ---------- B2: discrete columns and JSON ----------
+
+
+def _disc_export(values):
+    from pine import Bars
+    from pine.io import TradingViewExport
+
+    n = len(values)
+    b = Bars(np.arange(n) * 60, np.ones(n), np.ones(n) * 2, np.zeros(n), np.ones(n),
+             np.full(n, np.nan), timeframe="1")  # fmt: skip
+    return TradingViewExport(
+        b,
+        {"sig": np.asarray(values, float)},
+        ("time", "open", "high", "low", "close", "sig"),
+        "unix",
+    )
+
+
+def test_discrete_column_pass_and_fail_location():
+    exp = _disc_export([0, 1, 0, 1])
+    ok = check_export(
+        exp, {"sig": PortSpec(lambda b: np.array([0, 1, 0, 1], bool), kind="discrete")}
+    )
+    assert ok.passed and ok.columns == () and len(ok.discrete) == 1
+    bad = check_export(
+        exp, {"sig": PortSpec(lambda b: np.array([0, 1, 1, 1], bool), kind="discrete")}
+    )
+    assert not bad.passed and bad.discrete[0].first_unexcused == 2
+    assert bad.discrete[0].first_unexcused_ts == 120
+    assert "| sig | discrete |" in bad.to_markdown()
+
+
+def test_discrete_excuse_via_spec_and_nan_note():
+    exp = _disc_export([0, np.nan, 1, 0])
+    spec = PortSpec(
+        lambda b: np.array([0, 0, 0, 0], bool),
+        kind="discrete",
+        excuse=lambda b: np.array([False, False, True, False]),
+    )
+    rep = check_export(exp, {"sig": spec})
+    d = rep.discrete[0]
+    assert rep.passed and d.excused_bars == (2,)
+    assert "1 na value(s) in export read as false" in rep.to_markdown()
+
+
+def test_discrete_ignores_input_rounding():
+    exp = _disc_export([0, 1])
+    rep = check_export(
+        exp,
+        {"sig": PortSpec(lambda b: np.array([0, 1], bool), kind="discrete")},
+        input_rounding=0.005,
+    )
+    assert rep.passed
+
+
+def test_to_json_is_standard_json():
+    import json
+
+    from pine.parity import ParityReport
+
+    per_bar = Tolerance(atol=np.array([0.1, 0.2, 0.3]), rtol=0.0)
+    c1 = compare_series([1.0, 2.0, 3.0], [1.0, 2.0, 3.0], tolerance=per_bar, alpha=0.5)
+    c2 = compare_series([np.nan], [np.nan])  # nothing compared: mde_offset = inf
+    d = compare_discrete([True, False], [True, True], name="sig")
+    data = json.loads(ParityReport((c1, c2), (d,)).to_json())
+    assert data["passed"] is False
+    assert data["columns"][0]["atol"] == {"max": 0.3, "per_bar": True}
+    assert data["columns"][0]["mde_seed"] == pytest.approx(0.1)
+    assert data["columns"][1]["mde_offset"] is None
+    assert data["discrete"][0]["first_unexcused"] == 1
