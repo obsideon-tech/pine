@@ -30,6 +30,7 @@ from pine.bars import Bars
 from pine.io import TradingViewExport, load_tradingview_csv
 from pine.manifest import load_manifest
 from pine.parity import ParityReport, PortSpec, Tolerance, check_export
+from pine.sensitivity import LIPSCHITZ, input_rounding, rsi_input_error, stdev_lipschitz
 
 __all__ = [
     "CONSTANTS",
@@ -38,6 +39,7 @@ __all__ = [
     "PLOT_TITLES",
     "NaDecision",
     "check_capture",
+    "ohlc_rounding",
     "decide_na_policy",
     "main",
 ]
@@ -66,25 +68,41 @@ def _gapfree_specs(export: TradingViewExport) -> dict[str, PortSpec]:
     def cross(fn):
         return lambda b: fn(_col(export, "ema_fast"), _col(export, "ema_slow")).astype(float)
 
+    L = LIPSCHITZ
     return {
-        "sma": PortSpec(lambda b: ta.sma(b.close, LEN)),
-        "ema": PortSpec(lambda b: ta.ema(b.close, LEN)),
-        "rma": PortSpec(lambda b: ta.rma(b.close, LEN)),
-        "rsi": PortSpec(lambda b: ta.rsi(b.close, LEN), kind="bounded"),
-        "stdev": PortSpec(lambda b: ta.stdev(b.close, LEN)),
-        "stdev_sample": PortSpec(lambda b: ta.stdev(b.close, LEN, biased=False)),
-        "highest": PortSpec(lambda b: ta.highest(b.high, HL_LEN)),
-        "lowest": PortSpec(lambda b: ta.lowest(b.low, HL_LEN)),
-        "atr": PortSpec(lambda b: ta.atr(b.high, b.low, b.close, LEN)),
-        "tr": PortSpec(lambda b: ta.tr(b.high, b.low, b.close)),
-        "tr_handle_na": PortSpec(lambda b: ta.tr(b.high, b.low, b.close, handle_na=True)),
-        "ema_fast": PortSpec(lambda b: ta.ema(b.close, CONSTANTS["FAST"])),
-        "ema_slow": PortSpec(lambda b: ta.ema(b.close, CONSTANTS["SLOW"])),
-        "crossover": PortSpec(cross(ta.crossover), kind="unbounded", tolerance=_EXACT),
-        "crossunder": PortSpec(cross(ta.crossunder), kind="unbounded", tolerance=_EXACT),
+        "sma": PortSpec(lambda b: ta.sma(b.close, LEN), input_error=L["sma"]),
+        "ema": PortSpec(lambda b: ta.ema(b.close, LEN), input_error=L["ema"]),
+        "rma": PortSpec(lambda b: ta.rma(b.close, LEN), input_error=L["rma"]),
+        "rsi": PortSpec(
+            lambda b: ta.rsi(b.close, LEN),
+            kind="bounded",
+            input_error=lambda b, d: rsi_input_error(b.close, LEN, d),
+        ),
+        "stdev": PortSpec(lambda b: ta.stdev(b.close, LEN), input_error=L["stdev"]),
+        "stdev_sample": PortSpec(
+            lambda b: ta.stdev(b.close, LEN, biased=False),
+            input_error=stdev_lipschitz(LEN, biased=False),
+        ),
+        "highest": PortSpec(lambda b: ta.highest(b.high, HL_LEN), input_error=L["highest"]),
+        "lowest": PortSpec(lambda b: ta.lowest(b.low, HL_LEN), input_error=L["lowest"]),
+        "atr": PortSpec(lambda b: ta.atr(b.high, b.low, b.close, LEN), input_error=L["atr"]),
+        "tr": PortSpec(lambda b: ta.tr(b.high, b.low, b.close), input_error=L["tr"]),
+        "tr_handle_na": PortSpec(
+            lambda b: ta.tr(b.high, b.low, b.close, handle_na=True), input_error=L["tr"]
+        ),
+        "ema_fast": PortSpec(lambda b: ta.ema(b.close, CONSTANTS["FAST"]), input_error=1.0),
+        "ema_slow": PortSpec(lambda b: ta.ema(b.close, CONSTANTS["SLOW"]), input_error=1.0),
+        # Crossovers use the exported EMAs, not the rounded prices: no input allowance.
+        "crossover": PortSpec(
+            cross(ta.crossover), kind="unbounded", tolerance=_EXACT, input_error=0.0
+        ),
+        "crossunder": PortSpec(
+            cross(ta.crossunder), kind="unbounded", tolerance=_EXACT, input_error=0.0
+        ),
         # Alignment check (§5.4): the gap pattern depends on bar_index, so this column only
-        # matches if the export starts on the chart's first loaded bar.
-        "src_na": PortSpec(_src_na_expected),
+        # matches if the export starts on the chart's first loaded bar. It is the exported
+        # close itself on both sides, so rounding cancels.
+        "src_na": PortSpec(_src_na_expected, input_error=0.0),
     }
 
 
@@ -106,9 +124,17 @@ NA_COLUMNS = tuple(NA_PORTS)
 PLOT_TITLES = (*GAPFREE_COLUMNS, *NA_COLUMNS)
 
 
-def check_capture(export: TradingViewExport) -> ParityReport:
-    """Aligned-mode parity on the gap-free columns (and the ``src_na`` alignment check)."""
-    return check_export(export, _gapfree_specs(export))
+def check_capture(export: TradingViewExport, input_rounding: float | None = None) -> ParityReport:
+    """Aligned-mode parity on the gap-free columns (and the ``src_na`` alignment check).
+
+    ``input_rounding``: see `pine.parity.check_export`; `ohlc_rounding` estimates it."""
+    return check_export(export, _gapfree_specs(export), input_rounding=input_rounding)
+
+
+def ohlc_rounding(export: TradingViewExport) -> float:
+    """``δ`` implied by the coarsest printed precision among open/high/low/close."""
+    d = min(export.observed_decimals[k] for k in ("open", "high", "low", "close"))
+    return input_rounding(d)
 
 
 @dataclass(frozen=True)
@@ -123,15 +149,27 @@ class NaDecision:
         return self.matching[0] if len(self.matching) == 1 else None
 
 
-def decide_na_policy(export: TradingViewExport) -> list[NaDecision]:
-    """Run each ``*_na`` port under every policy on the exported ``src_na`` column."""
+def decide_na_policy(
+    export: TradingViewExport, input_rounding: float | None = None
+) -> list[NaDecision]:
+    """Run each ``*_na`` port under every policy on the exported ``src_na`` column.
+
+    ``input_rounding`` as in `check_capture` (``src_na`` is the exported close)."""
     src = _col(export, "src_na")
     out = []
     for col, (fn, n, kind) in NA_PORTS.items():
         reports = {}
         for policy in ta.NA_POLICIES:
-            spec = PortSpec(lambda b, fn=fn, n=n, p=policy: fn(src, n, na_policy=p), kind=kind)
-            reports[policy] = check_export(export, {col: spec})
+            if col == "rsi_na":
+                err = lambda b, d, n=n, p=policy: rsi_input_error(src, n, d, p)  # noqa: E731
+            else:
+                err = 1.0  # sma/ema/rma/highest/lowest/population stdev: L = 1
+            spec = PortSpec(
+                lambda b, fn=fn, n=n, p=policy: fn(src, n, na_policy=p),
+                kind=kind,
+                input_error=err,
+            )
+            reports[policy] = check_export(export, {col: spec}, input_rounding=input_rounding)
         matching = tuple(p for p, r in reports.items() if r.passed)
         out.append(NaDecision(col, matching, reports))
     return out
@@ -166,6 +204,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--manifest", help="fixture manifest (supplies timeframe and timezone)")
     ap.add_argument("--timeframe")
     ap.add_argument("--tz", default=None)
+    ap.add_argument(
+        "--inputs-rounded",
+        action="store_true",
+        help="OHLC in the export are rounded beyond the instrument's tick (e.g. dividend-"
+        "adjusted); add the input-rounding allowance from the printed OHLC precision",
+    )
     args = ap.parse_args(argv)
     try:
         if args.manifest:
@@ -182,7 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    report, decisions = check_capture(exp), decide_na_policy(exp)
+    delta = ohlc_rounding(exp) if args.inputs_rounded else None
+    report = check_capture(exp, input_rounding=delta)
+    decisions = decide_na_policy(exp, input_rounding=delta)
     sys.stdout.write(_summary(report, decisions))
     ok = report.passed and all(d.decided for d in decisions)
     return 0 if ok else 1

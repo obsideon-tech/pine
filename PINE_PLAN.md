@@ -82,6 +82,31 @@ Whether TradingView CSV exports round plotted values to the chart's display prec
 **(unverified)**: measure it on the first real export and set defaults from the result.
 Tolerances are part of the public API; loosening one is a breaking change (§7.2).
 
+**Rounded inputs** (implemented 2026-11-03, `pine.sensitivity`). The floor above covers
+rounding of the *reference output*. If the export also rounds the OHLC *inputs* to `±δ`
+(`δ = 0.5·10^−d` for `d` printed decimals), a correct port fed those inputs differs from the
+reference by up to the propagated error below, which `check_export(..., input_rounding=δ)`
+adds to `atol` per column (per bar for RSI):
+
+| Built-in | Propagated error | Argument |
+|---|---|---|
+| sma, ema, rma | `δ` | non-negative weights summing to 1, seed included |
+| highest, lowest | `δ` | max/min are 1-Lipschitz |
+| stdev | `δ` (population), `√(n/(n−1))·δ` (sample) | `σ = ‖Px‖/√n`, `P` the centring projection |
+| tr, atr | `2δ` | each term is a difference of two inputs; max and RMA are 1-Lipschitz |
+| rsi | `min(100, 200δ/(U′+D′))` per bar | `|ΔU|, |ΔD| ≤ 2δ` ⇒ `|ΔRSI| = 100·|ΔU·D − U·ΔD| / ((U′+D′)(U+D)) ≤ 200δ/(U′+D′)`; `U′, D′` from the port |
+
+The RSI bound is exact (not first-order) and needs only the port's own `U′, D′`. There is no
+useful global RSI tolerance: in a quiet market one tick of rounding moves RSI by points (a test
+demonstrates > 1 point at `δ = 0.005`). Soundness is tested by Hypothesis with uniform, all-`+δ`
+and alternating `±δ` perturbations; tightness by cases that attain `δ` (SMA) and `2δ` (TR).
+
+The allowance is **opt-in** (default: inputs exact). It widens tolerances and so raises the
+smallest detectable defect; use it only when prices are rounded beyond the instrument's tick,
+typically dividend-adjusted data. `python -m pine.reference --inputs-rounded` takes `δ` from
+the coarsest printed OHLC precision. A test confirms the allowance does not mask the seed-swap
+mutation on rounded data.
+
 ### 5.2 na-mask parity before value parity
 
 The boolean pattern of `na` must match **exactly**. It is reported first and separately: an
@@ -112,9 +137,10 @@ data gap), only convergence mode (§5.3) applies.
 ### 5.5 Discrete outputs
 
 Booleans and categorical outputs (`ta.crossover`, Supertrend direction, signal flags) are
-compared exactly. A mismatch is **excused** only if the continuous inputs to the decision at
-that bar are within tolerance of the tie (e.g. `|a − b| ≤ atol + rtol·|b|` for a crossover of
-`a` over `b`). Excused flips are counted and listed in the report, never silently passed.
+compared exactly. A mismatch is **excused** only if the continuous inputs to the decision
+are within tolerance of the tie (e.g. `|a − b| ≤ atol + rtol·|b|` for a crossover of `a` over
+`b`). For crossovers the decision at bar `t` uses bars `t` **and** `t−1`, so the excuse mask is
+`crossover_excuse(a, b, tol)` = near-tie at `t` or `t−1` (`near_tie` alone covers only `t`). Excused flips are counted and listed in the report, never silently passed.
 State that depends on a flipped decision (e.g. Supertrend after a direction change) is
 re-synchronised to Pine's value for the next comparison, and the re-sync is reported.
 
@@ -470,21 +496,18 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         detected at predicted bars; each `*_na` capture column discriminates all three (a
         synthetic export under any one policy matches that policy only). Default stays
         `propagate`. **Remaining: one real capture export to decide.**
-- [ ] **[high] A3 — Input-rounding-aware tolerances** (§10 A3)
-      - _Raised:_ 2026-11-03
-      - _Why:_ rounded OHLC in an export produces output error the current floor ignores.
-      - _Done when:_ `propagated_tolerance` with the §10 A3 bounds, each bound tested by ±δ
-        input perturbation, and `check_export` uses it when the input decimals are known.
+- [x] **[high] A3 — Input-rounding-aware tolerances** (§10 A3) — done 2026-11-03:
+      `pine.sensitivity` bounds (§5.1), per-bar `Tolerance.atol`, `PortSpec.input_error`,
+      `check_export(..., input_rounding=δ)` (opt-in), `--inputs-rounded` in `pine.reference`
+      (also applied to the na-policy decision). Sound and tight per tests.
 - [ ] **[high] A4 — Minimum detectable error in reports** (§10 A4)
       - _Raised:_ 2026-11-03
       - _Why:_ a pass without a sensitivity statement overstates what was shown.
       - _Done when:_ each `ColumnReport` states its seed-error detection threshold, and a
         magnitude sweep in the mutation suite confirms it.
-- [ ] **[high] B1 — Two-bar crossover excuse** (§10 B1)
-      - _Raised:_ 2026-11-03
-      - _Why:_ `near_tie` is per bar; a crossover depends on bars t and t−1, so legitimate flips
-        caused by a tie at t−1 currently fail.
-      - _Done when:_ `crossover_excuse` exists and a test with a tie at t−1 passes only with it.
+- [x] **[high] B1 — Two-bar crossover excuse** (§10 B1) — done 2026-11-03:
+      `pine.parity.crossover_excuse`; a flip caused by a tie at t−1 fails with `near_tie` and
+      passes with it; real flips and NaN inputs are not excused.
 - [ ] **[med] B2 — Discrete columns in `check_export`; JSON parity report** (§10 B2)
       - _Raised:_ 2026-11-03
       - _Why:_ exported signal columns cannot be checked today; consumers' CI needs JSON.
@@ -590,14 +613,16 @@ the indicator's sup-norm sensitivity to its inputs:
 | highest, lowest | 1 | order statistics are 1-Lipschitz |
 | stdev (population) | 1 | `σ = ‖P x‖/√n` with `P` the centring projection, `‖P‖ ≤ 1`; sample: `√(n/(n−1))` |
 | ATR | 2 | each true-range term is a difference of two inputs; `max` and RMA are 1-Lipschitz |
-| RSI | per bar, ≈ `200 / (up + down)` | `RSI = 100·U/(U+D)`; first-order sensitivity to `U, D` each perturbed by ≤ `2δ_in` |
+| RSI | per bar, `min(100, 200 / (U′ + D′))` per unit `δ_in` | `RSI = 100·U/(U+D)`, `U, D` each perturbed by ≤ `2δ_in`; exact bound, see §5.1 |
 
 RSI has no global bound: when `up + down` is small (flat markets) a one-tick rounding can move
-RSI by many points, so its tolerance must be computed per bar. Implement
-`propagated_tolerance(indicator, δ_in, δ_out)`; test each bound by perturbing inputs by ±δ and
-asserting the output change stays within it. Tradeoff: per-indicator code, but without it a
-rounded-input export would either fail correct ports or force a blanket tolerance loose enough
-to pass wrong ones.
+RSI by many points, so its tolerance must be computed per bar. Tradeoff: per-indicator code,
+but without it a rounded-input export would either fail correct ports or force a blanket
+tolerance loose enough to pass wrong ones.
+
+*Status 2026-11-03: done* — implemented as `pine.sensitivity` + `PortSpec.input_error` +
+`check_export(input_rounding=...)`, opt-in (§5.1). The planned `propagated_tolerance` function
+became a per-spec `input_error` so ports declare their own sensitivity.
 
 **A4. Minimum detectable error (MDE).** A pass should say what it could not see. For a
 recursive filter, a seed error `e₀` is detectable in aligned mode only if `e₀ > tol` at the
@@ -612,7 +637,7 @@ longer; the alternative is a pass that implies more than it shows.
 **B1. Two-bar crossover excuse.** `near_tie` is evaluated per bar, but `crossover` at bar t
 depends on the comparisons at t and t−1. A legitimate flip caused by a tie at t−1 is
 currently not excused. Add `crossover_excuse(a, b, tol) = near_tie_t | near_tie_{t−1}` and
-use it in examples and tests.
+use it in examples and tests. *Status 2026-11-03: done.*
 
 **B2. Discrete columns and machine-readable reports.** `PortSpec` accepts numeric kinds only,
 so an exported 0/1 signal column cannot be checked by `check_export`. Add `kind="discrete"`

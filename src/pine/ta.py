@@ -46,6 +46,7 @@ __all__ = [
     "ema",
     "rma",
     "rsi",
+    "rsi_components",
     "stdev",
     "highest",
     "lowest",
@@ -158,6 +159,23 @@ def rma(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np
     return _seeded_recursive(_source(source), n_len, 1.0 / n_len, _policy(na_policy))
 
 
+def rsi_components(
+    source: ArrayLike, length: int, na_policy: NaPolicy = "propagate"
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(up, down)``: the two RMAs inside ``ta.rsi``. Exposed so the RSI input-rounding bound
+    (`pine.sensitivity.rsi_input_error`) uses exactly the port's values."""
+    n_len = _length(length)
+    x = _source(source)
+    u = np.full(x.size, np.nan)
+    d = np.full(x.size, np.nan)
+    for t in range(1, x.size):
+        ch = x[t] - x[t - 1]
+        if not math.isnan(ch):
+            u[t] = max(ch, 0.0)
+            d[t] = max(-ch, 0.0)
+    return rma(u, n_len, na_policy), rma(d, n_len, na_policy)
+
+
 def rsi(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np.ndarray:
     """``ta.rsi``. Manual's code::
 
@@ -170,19 +188,9 @@ def rsi(source: ArrayLike, length: int, na_policy: NaPolicy = "propagate") -> np
     The first change is `na`, so the first value is at bar ``length`` (0-based). A change
     is `na` when either bar is `na`; ``na_policy`` applies to the two RMAs.
     """
-    n_len = _length(length)
-    x = _source(source)
-    u = np.full(x.size, np.nan)
-    d = np.full(x.size, np.nan)
-    for t in range(1, x.size):
-        ch = x[t] - x[t - 1]
-        if not math.isnan(ch):
-            u[t] = max(ch, 0.0)
-            d[t] = max(-ch, 0.0)
-    up = rma(u, n_len, na_policy)
-    down = rma(d, n_len, na_policy)
-    out = np.full(x.size, np.nan)
-    for t in range(x.size):
+    up, down = rsi_components(source, length, na_policy)
+    out = np.full(up.size, np.nan)
+    for t in range(up.size):
         if math.isnan(up[t]) or math.isnan(down[t]):
             continue
         if down[t] == 0.0:

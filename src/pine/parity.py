@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import numpy as np
@@ -44,6 +44,8 @@ __all__ = [
     "compare_series",
     "compare_discrete",
     "near_tie",
+    "crossover_excuse",
+    "format_atol",
     "check_export",
 ]
 
@@ -53,12 +55,16 @@ Mode = Literal["aligned", "convergence"]
 
 @dataclass(frozen=True)
 class Tolerance:
-    atol: float
+    """``|py - pine| <= atol + rtol * |pine|``. ``atol`` may be a per-bar array (e.g. the
+    RSI input-rounding allowance, §5.1); ``rtol`` is a scalar."""
+
+    atol: float | np.ndarray
     rtol: float
 
     def __post_init__(self) -> None:
-        if not (self.atol >= 0 and self.rtol >= 0):
-            raise ValueError("atol and rtol must be non-negative")
+        a = np.asarray(self.atol, dtype=np.float64)
+        if np.isnan(a).any() or not (np.all(a >= 0) and self.rtol >= 0):
+            raise ValueError("atol and rtol must be non-negative (and atol not NaN)")
 
     def bound(self, reference: np.ndarray) -> np.ndarray:
         return self.atol + self.rtol * np.abs(reference)
@@ -231,12 +237,31 @@ def compare_series(
     return report
 
 
+def format_atol(atol: float | np.ndarray) -> str:
+    if np.ndim(atol) == 0:
+        return f"{float(atol):.3g}"
+    return f"≤{float(np.max(atol)):.3g} (per bar)"
+
+
 def near_tie(a: ArrayLike, b: ArrayLike, tolerance: Tolerance) -> np.ndarray:
     """Bars where ``a`` and ``b`` are within tolerance of each other: a crossover between them
     may legitimately flip between implementations (§5.5)."""
     a_, b_ = _as_1d("a", a), _as_1d("b", b)
     with np.errstate(invalid="ignore"):
         return np.abs(a_ - b_) <= tolerance.bound(b_)
+
+
+def crossover_excuse(a: ArrayLike, b: ArrayLike, tolerance: Tolerance) -> np.ndarray:
+    """Excuse mask for ``ta.crossover(a, b)`` / ``ta.crossunder(a, b)`` mismatches (§5.5).
+
+    A crossover at bar ``t`` is ``a[t] > b[t] and a[t-1] <= b[t-1]``: it depends on the
+    comparison at *both* bars, so a legitimate flip can be caused by a near-tie at ``t`` or at
+    ``t - 1``. `near_tie` alone covers only ``t``. NaN inputs are never excused.
+    """
+    tie = near_tie(a, b, tolerance)
+    ex = tie.copy()
+    ex[1:] |= tie[:-1]
+    return ex
 
 
 @dataclass(frozen=True)
@@ -293,6 +318,10 @@ class PortSpec:
     mode: Mode = "aligned"
     exclude: int = 0
     tolerance: Tolerance | None = None
+    input_error: float | Callable[[Bars, float], ArrayLike] | None = None
+    """Output error caused by inputs rounded to ``±δ`` (§5.1, `pine.sensitivity`): a float is
+    the sensitivity ``L`` (error ``L·δ``); a callable ``(bars, δ)`` returns per-bar error.
+    ``None``: unknown, and `check_export` refuses ``input_rounding`` for this column."""
 
 
 @dataclass(frozen=True)
@@ -322,7 +351,7 @@ class ParityReport:
                 f"| {c.name} | {c.kind} | {c.mode} | {c.n_compared} | {c.n_excluded} "
                 f"| {c.na_mismatches} | {fd} | {c.max_abs_err:.3g} ({c.max_abs_err_bar}) "
                 f"| {c.max_rel_err:.3g} | {c.rmse:.3g} | {c.within_tol_share:.2%} "
-                f"| {c.tolerance.atol:.3g} / {c.tolerance.rtol:.3g} "
+                f"| {format_atol(c.tolerance.atol)} / {c.tolerance.rtol:.3g} "
                 f"| {'pass' if c.passed else 'FAIL'} |"
             )
         for d in self.discrete:
@@ -337,28 +366,52 @@ class ParityReport:
         return "\n".join(lines) + "\n"
 
 
-def check_export(export, specs: Mapping[str, PortSpec]) -> ParityReport:
+def check_export(
+    export, specs: Mapping[str, PortSpec], input_rounding: float | None = None
+) -> ParityReport:
     """Run each port on ``export.bars`` and compare with the exported column of that name.
 
     ``export`` is a `pine.io.TradingViewExport`. Unless a spec gives a tolerance, the default
     for its kind is floored by the column's observed printed precision.
+
+    ``input_rounding``: half-width ``δ`` of the rounding applied to the exported OHLC inputs
+    (`pine.sensitivity.input_rounding`). ``None`` (default) means inputs are exact. When set,
+    each column's ``atol`` grows by its spec's ``input_error``. This widens tolerances and so
+    raises the smallest detectable defect: use it only when prices are rounded beyond the
+    instrument's tick (e.g. dividend-adjusted data), §5.1.
     """
     missing: Sequence[str] = [c for c in specs if c not in export.columns]
     if missing:
         raise KeyError(f"columns not in export: {missing}; available: {list(export.columns)}")
+    if input_rounding is not None and input_rounding < 0:
+        raise ValueError("input_rounding must be non-negative")
     reports = []
     for col, spec in specs.items():
         tol = spec.tolerance or tolerance_for(spec.kind, export.observed_decimals.get(col))
-        reports.append(
-            compare_series(
-                spec.fn(export.bars),
-                export.columns[col],
-                name=col,
-                kind=spec.kind,
-                tolerance=tol,
-                mode=spec.mode,
-                exclude=spec.exclude,
-                ts=export.bars.ts,
-            )
+        note = None
+        if input_rounding is not None:
+            if spec.input_error is None:
+                raise ValueError(
+                    f"column {col!r}: input_rounding given but the spec has no input_error"
+                )
+            if callable(spec.input_error):
+                extra = np.asarray(spec.input_error(export.bars, input_rounding), np.float64)
+                extra = np.nan_to_num(extra, nan=0.0)  # na bars are compared on the na mask
+            else:
+                extra = float(spec.input_error) * input_rounding
+            tol = Tolerance(atol=tol.atol + extra, rtol=tol.rtol)
+            note = f"{col}: inputs assumed rounded to ±{input_rounding:.3g}; allowance added"
+        rep = compare_series(
+            spec.fn(export.bars),
+            export.columns[col],
+            name=col,
+            kind=spec.kind,
+            tolerance=tol,
+            mode=spec.mode,
+            exclude=spec.exclude,
+            ts=export.bars.ts,
         )
+        if note:
+            rep = replace(rep, notes=(*rep.notes, note))
+        reports.append(rep)
     return ParityReport(columns=tuple(reports))

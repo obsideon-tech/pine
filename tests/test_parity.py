@@ -151,3 +151,28 @@ def test_check_export_failure_report(fixtures_dir):
 def test_check_export_unknown_column(fixtures_dir):
     with pytest.raises(KeyError, match="RSI"):
         check_export(_placeholder_export(fixtures_dir), {"RSI": PortSpec(fn=lambda b: b.close)})
+
+
+def test_crossover_excuse_covers_a_tie_on_the_previous_bar():
+    from pine import ta
+    from pine.parity import crossover_excuse
+
+    tol = Tolerance(1e-9, 0)
+    b = np.zeros(4)
+    a = np.array([-1.0, -1e-12, 1.0, 1.0])  # tie at bar 1, crossover at bar 2
+    a_alt = a.copy()
+    a_alt[1] = 1e-12  # other side of the tie: a_alt is already above at bar 1
+    ref, alt = ta.crossover(a, b), ta.crossover(a_alt, b)
+    assert ref[2] and not alt[2]  # the flip is at bar 2, caused by the tie at bar 1
+    assert not compare_discrete(alt, ref, excuse=near_tie(a, b, tol)).passed
+    r = compare_discrete(alt, ref, excuse=crossover_excuse(a, b, tol))
+    assert r.passed and 2 in r.excused_bars
+
+
+def test_crossover_excuse_does_not_excuse_real_flips():
+    from pine.parity import crossover_excuse
+
+    a = np.array([-1.0, -1.0, 1.0, 1.0, np.nan])
+    b = np.zeros(5)
+    ex = crossover_excuse(a, b, Tolerance(1e-9, 0))
+    assert not ex.any()

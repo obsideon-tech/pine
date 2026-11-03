@@ -20,7 +20,7 @@ from pine.parity import (
     compare_discrete,
     compare_series,
     convergence_bars,
-    near_tie,
+    crossover_excuse,
     tolerance_for,
 )
 
@@ -295,7 +295,7 @@ def test_crossover_near_ties_are_excused_not_hidden():
     ref, alt = ta.crossover(a, b), ta.crossover(a_alt, b)
     assert (ref != alt).any()
     tol = tolerance_for("unbounded")
-    r = compare_discrete(alt, ref, excuse=near_tie(a, b, tol))
+    r = compare_discrete(alt, ref, excuse=crossover_excuse(a, b, tol))
     assert r.passed and r.excused == 1 and r.excused_bars == (3,)
     assert not compare_discrete(alt, ref).passed
 

@@ -73,7 +73,8 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 - **`na` inside windows** may be handled differently by TradingView. Three hypotheses are
   implemented (`na_policy`); the default `propagate` is unconfirmed until a capture export
   decides. Gap-free data is unaffected.
-- **Tolerances** assume full-precision inputs; rounded OHLC in an export is not yet accounted for.
+- **Rounded inputs** are accounted for only when asked (`input_rounding=` / `--inputs-rounded`):
+  the allowance is provably sufficient but widens tolerances, so it is off by default.
 - **Lint** does not trace user variables or resolve `if` blocks for alert gating; its precision
   on real scripts is unmeasured. Parity reports are Markdown only.
 

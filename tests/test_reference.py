@@ -142,3 +142,10 @@ def test_manifest_template_is_valid_and_matches_constants():
 
     m = load_manifest(ROOT / "tools" / "reference_capture.example.yaml")
     assert m.indicator["inputs"] == CONSTANTS
+
+
+def test_cli_inputs_rounded_adds_allowance(tmp_path, capsys):
+    path = synthetic_export("propagate", tmp_path)
+    assert main([str(path), "--manifest", str(MANIFEST), "--inputs-rounded"]) == 0
+    out = capsys.readouterr().out
+    assert "inputs assumed rounded to ±0.005" in out
