@@ -646,6 +646,10 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         probe groups), `python -m pine.semantics` (md/json; exit 1 names any group where
         TradingView differs from the runtime). Every multi-hypothesis group is shown to
         discriminate on fixture data. **Remaining: one export (owner).**
+      - _Progress 2026-11-03 (later):_ the original 20 groups match on exports (§12). Added two
+        groups for calls inside a `for` loop (`loop_builtin`: `math.sum`; `loop_userfn`: a user
+        function's `x[1]` and `x[p]`), three hypotheses each (`per_call`, `per_bar_last`,
+        `per_iteration`), all shown to discriminate. **Remaining: an export with them.**
 - [ ] **[high] E2 — `pine.runtime` bar-by-bar execution model** (§11 E2)
       - _Raised:_ 2026-11-03
       - _Why:_ complex indicators are stateful and conditional; without the execution model a
@@ -665,11 +669,24 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Why:_ a single output column says *that* a port diverges, not *where*.
       - _Done when:_ documented procedure + `check_port` that reports the upstream-most
         diverging intermediate and its first bar, and writes a port manifest.
+      - _Progress 2026-11-03:_ `pine.port.check_port` built: compares every debug-plotted
+        stage with the port's `ctx.plot`, names the root-cause stage (earliest divergence in
+        time, ties to the upstream stage) and the first failing stage in pipeline order;
+        handles truncated exports (offset from `bar_index`, warm-up exclusion, `sync` for
+        stateful stages, inconclusive below 100 rows). Procedure: `docs/CAPTURE.md`
+        "Checking a port". **Remaining: the port manifest; a first real port through it.**
 - [ ] **[med] F1 — Built-in batch 1 with capture coverage** (§11 F)
       - _Raised:_ 2026-11-03
       - _Why:_ complex indicators are built from more than the 11 current built-ins.
       - _Done when:_ each listed built-in meets §5.8 (incl. oracle (c)), has an A3 sensitivity,
         `alpha` where seeded, mutation cases, and capture columns.
+      - _Progress 2026-11-03:_ first subset implemented (`math.sum`, `wma`, `hma`, `variance`,
+        `percentile_linear_interpolation`, `pivothigh/low`, `fixnan`, `cum`, `obv`, `pvt`) in
+        `pine.ta` and `pine.runtime` (bit-for-bit equal by construction), with naive-reference
+        property tests and `tools/capture_builtins.pine` + `pine.builtin_capture` (16 groups,
+        competing hypotheses for `na` handling, hma length rounding, pivot ties, percentile
+        rank). **Not yet:** an export; A3 sensitivities and mutation cases for these; the rest
+        of batch 1.
 - [ ] **[med] H2 — Verification registry** (§11 H2)
       - _Raised:_ 2026-11-03
       - _Why:_ "verified" must be a recorded, checkable state per built-in, not prose.
@@ -928,6 +945,7 @@ hypothesis of each (what `pine.runtime` implements) and its alternatives:
 | `change_na` | `propagate` | `last_valid` |
 | `regime` (state machine with `else if ta.crossunder`) | `per_call` | `every_bar` (they differ after a one-bar whipsaw, found on long synthetic data) |
 | `alignment`, `var`, `supertrend`, `trail_stop` | single (parity checks) | — |
+| `loop_builtin` (`math.sum` in a 3-iteration loop), `loop_userfn` (`x[1]`, `x[p]` in a function called in the loop) | `per_call` (one state per call site; history advances per call) | `per_bar_last` (one value per bar, the last call's), `per_iteration` (as if unrolled) |
 
 Every expectation is **unverified**. Any mismatch makes the checker exit 1 and name the
 group; the fix is to change the runtime (and its scalar helper) to the observed hypothesis.
@@ -958,6 +976,13 @@ na policy is implemented until A2 is decided. Validation without exports: bit-fo
 with `pine.ta`, exact reproduction of every expected probe hypothesis, and the Supertrend port
 equal to an independent loop implementation.
 
+*Update 2026-11-03: `for` loops.* `ctx.loop(key, iterable)` runs a loop body in Pine's shape:
+keys may repeat across iterations, and each call site in the body keeps one state shared by
+all iterations (hypothesis `per_call` of the `loop_*` probes, **unverified**). Should an
+export show `per_bar_last` or `per_iteration`, only `ctx.loop` changes. Why it matters: ports
+that call stateful built-ins or history-reading functions inside loops (common in
+optimisation-style indicators) are otherwise silently wrong in one of three ways.
+
 ### F. Built-in breadth
 
 Batch 1, chosen by expected use in public indicators (to be re-ranked with C3's corpus
@@ -970,6 +995,24 @@ consistency tests used for `reference_capture.pine`). Stateful/discrete outputs
 (Supertrend/SAR direction, pivots) are compared with `compare_discrete` and excuses.
 `pivothigh/low` and `valuewhen` also need delay semantics checked (a pivot is confirmed `right`
 bars later).
+
+*Status 2026-11-03: first subset built, export pending.* `tools/capture_builtins.pine`
+(19 plots) and `pine.builtin_capture`, run by `python -m pine.capture check`. Each group's
+hypotheses are independent numpy implementations; the expected one is what `pine.ta` /
+`pine.runtime` implement:
+
+| Group | Expected | Alternatives |
+|---|---|---|
+| `sum`, `wma`, `variance`, `percentile`, `cum` (gap-free) | `window` / `linear_weights` / `population` / `inclusive` (rank p(n−1)) / `running_total` | `variance`: `sample`; `percentile`: `exclusive` (rank p(n+1)−1), `hazen` (np − ½) |
+| `sum_na`, `wma_na`, `variance_na`, `percentile_na`, `cum_na` | `skip` (by analogy with the observed windowed built-ins) | `skip_na_out`, `propagate` |
+| `hma` (lengths 9 and 14) | `half_floor_sqrt_floor` | the other three floor/round combinations |
+| `pivots` (`high`/`low`, 3 left, 2 right) | `left_strict` (> left bars, ≥ right bars: a flat top marks its leftmost bar) | `right_strict`, `strict`, `weak` |
+| `fixnan`, `obv`, `pvt`, `alignment` | single | — |
+
+Pivot ties need equal highs or lows in the export; on prices with few decimals they occur,
+otherwise the group reports "not decidable". `obv`/`pvt` use the exported volume (the script
+plots it) and are na on symbols without volume. Truncated exports: 25 warm-up rows excluded,
+running totals anchored on the export and their increments checked.
 
 ### G. Time, sessions, multi-timeframe
 
@@ -996,7 +1039,9 @@ reconstructing it, and say so in the port manifest. `request.security_lower_tf` 
 3. Export over the relevant §10 A1 matrix rows.
 4. `check_port` (new): aligned parity on outputs **and** intermediates; reports the
    upstream-most intermediate that diverges and its first bar (divergence localisation), the
-   MDE of every column, and excused discrete flips.
+   MDE of every column, and excused discrete flips. *Built 2026-11-03* (`pine.port`): root
+   cause = the failing stage with the earliest first divergence (ties: upstream); shown on
+   synthetic pipelines to name a broken first stage even though every later stage also fails.
 5. Write a port manifest: Pine source hash and version, inputs, port version, matrix rows
    passed, tolerances, MDE, date.
 

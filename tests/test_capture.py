@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from test_reference import synthetic_export
 
+from pine.builtin_capture import runtime_capture as builtin_capture
 from pine.capture import main
 from pine.io import TradingViewExport, load_tradingview_csv, write_tradingview_csv
 from pine.manifest import load_manifest
@@ -24,6 +25,7 @@ def combined_export(tmp_path: Path, semantics: bool = True) -> Path:
     cols = dict(ref.columns)
     if semantics:
         cols |= dict(run(runtime_capture, ref.bars).columns)
+        cols |= dict(run(builtin_capture, ref.bars).columns)
         cols |= dict(run(strategy_capture, ref.bars, strategy=StrategyConfig()).columns)
     exp = TradingViewExport(
         ref.bars, cols, ("time", "open", "high", "low", "close", "Volume", *cols), "unix"
@@ -39,7 +41,8 @@ def test_manifest_written_valid_and_not_overwritten(tmp_path, capsys):
     m = load_manifest(csv.with_suffix(".yaml"))
     assert m.symbol == "EXAMPLE:SYM" and m.timeframe == "60" and m.adjustment == "splits"
     assert m.indicator["name"] == (
-        "pine reference capture + pine semantics capture + pine strategy capture"
+        "pine reference capture + pine semantics capture + pine builtin capture + "
+        "pine strategy capture"
     )
     assert m.indicator["inputs"]["semantics.ST_FACTOR"] == 3.0
     assert m.displayed_precision >= 2
@@ -94,7 +97,9 @@ def test_check_json(tmp_path, capsys):
     assert main(["check", str(csv), "--timeframe", "60", "--format", "json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["passed"] and data["skipped"] == []
-    assert {d["group"] for d in data["semantics"]} >= {"cond_ema", "rounding"}
+    assert {d["group"] for d in data["semantics"]} >= {"cond_ema", "rounding", "loop_builtin"}
+    assert {d["group"] for d in data["builtins"]} >= {"wma", "pivots"}
+    assert all(d["ok"] for d in data["builtins"])
 
 
 def test_check_errors_are_actionable(tmp_path, capsys):

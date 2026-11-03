@@ -50,7 +50,19 @@ DEFAULT_NA_POLICY: dict[str, str] = {
     "ema": "skip_na_out",
     "rma": "skip_na_out",
     "rsi": "skip_na_out",
+    # Batch F (PINE_PLAN.md §11 F): expected by analogy with the observed windowed built-ins,
+    # **unverified** until a `tools/capture_builtins.pine` export is checked.
+    "sum": "skip",
+    "wma": "skip",
+    "hma": "skip",
+    "variance": "skip",
+    "percentile_linear_interpolation": "skip",
+    "cum": "skip",
 }
+NA_POLICY_OBSERVED: frozenset[str] = frozenset(
+    ("sma", "stdev", "highest", "lowest", "ema", "rma", "rsi")
+)
+"""Built-ins whose `DEFAULT_NA_POLICY` entry is observed on a TradingView export (§12)."""
 
 __all__ = [
     "NA_POLICIES",
@@ -72,6 +84,18 @@ __all__ = [
     "barssince",
     "valuewhen",
     "supertrend",
+    "math_sum",
+    "wma",
+    "hma",
+    "variance",
+    "percentile_linear_interpolation",
+    "pivothigh",
+    "pivotlow",
+    "fixnan",
+    "cum",
+    "obv",
+    "pvt",
+    "NA_POLICY_OBSERVED",
 ]
 
 
@@ -486,3 +510,108 @@ def supertrend(
         direction[t] = d
         st[t] = lb if d == -1.0 else ub
     return st, direction
+
+
+# ---------------------------------------------------------------------------- batch F
+# Defined once as incremental objects in `pine.runtime.builtins` and streamed here, so the
+# vectorised and bar-by-bar forms agree bit for bit. Each is **unverified** against TradingView
+# until a ``tools/capture_builtins.pine`` export is checked (`pine.builtin_capture`).
+
+
+def _stream(node, *sources: ArrayLike) -> np.ndarray:
+    xs = [_source(s) for s in sources]
+    if len({x.size for x in xs}) > 1:
+        raise ValueError("inputs must have the same length")
+    out = np.full(xs[0].size, np.nan)
+    for t in range(xs[0].size):
+        out[t] = node.update(*(x[t] for x in xs))
+    return out
+
+
+def math_sum(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
+    """``math.sum(source, length)``: sum of the last ``length`` values, newest first."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Sum(_length(length), _policy(na_policy, "sum")), source)
+
+
+def wma(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
+    """``ta.wma``: weights ``length - i`` for the value ``i`` bars back (manual's code, with
+    its ``* length`` factor kept for identical rounding)."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Wma(_length(length), _policy(na_policy, "wma")), source)
+
+
+def hma(source: ArrayLike, length: int, na_policy: NaPolicy | None = None) -> np.ndarray:
+    """``ta.hma``: ``wma(2 wma(x, length // 2) - wma(x, length), floor(sqrt(length)))``."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Hma(_length(length), _policy(na_policy, "hma")), source)
+
+
+def variance(
+    source: ArrayLike, length: int, biased: bool = True, na_policy: NaPolicy | None = None
+) -> np.ndarray:
+    """``ta.variance``: `stdev` squared, by the same arithmetic without the square root."""
+    from pine.runtime import builtins as rb
+
+    n_len = _length(length)
+    if not biased and n_len < 2:
+        raise ValueError("unbiased variance needs length >= 2")
+    return _stream(rb.Variance(n_len, biased, _policy(na_policy, "variance")), source)
+
+
+def percentile_linear_interpolation(
+    source: ArrayLike, length: int, percentage: float, na_policy: NaPolicy | None = None
+) -> np.ndarray:
+    """``ta.percentile_linear_interpolation``: rank ``p/100 * (n - 1)`` in the sorted window,
+    interpolated linearly."""
+    from pine.runtime import builtins as rb
+
+    pol = _policy(na_policy, "percentile_linear_interpolation")
+    return _stream(rb.PercentileLinear(_length(length), percentage, pol), source)
+
+
+def pivothigh(source: ArrayLike, leftbars: int, rightbars: int) -> np.ndarray:
+    """``ta.pivothigh(source, leftbars, rightbars)``: the pivot's value on the bar
+    ``rightbars`` after it, else `na`. Ties: strictly above the left bars, at least as high as
+    the right bars."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Pivothigh(_length(leftbars), _length(rightbars)), source)
+
+
+def pivotlow(source: ArrayLike, leftbars: int, rightbars: int) -> np.ndarray:
+    """``ta.pivotlow``: as `pivothigh`, mirrored."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Pivotlow(_length(leftbars), _length(rightbars)), source)
+
+
+def fixnan(source: ArrayLike) -> np.ndarray:
+    """``fixnan(source)``: `na` replaced by the last non-`na` value."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Fixnan(), source)
+
+
+def cum(source: ArrayLike, na_policy: NaPolicy | None = None) -> np.ndarray:
+    """``ta.cum(source)``: running total (`na` handling: `pine.runtime.builtins.Cum`)."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Cum(_policy(na_policy, "cum")), source)
+
+
+def obv(close: ArrayLike, volume: ArrayLike) -> np.ndarray:
+    """``ta.obv``: ``ta.cum(math.sign(ta.change(close)) * volume)``."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Obv(DEFAULT_NA_POLICY["cum"]), close, volume)
+
+
+def pvt(close: ArrayLike, volume: ArrayLike) -> np.ndarray:
+    """``ta.pvt``: ``ta.cum(ta.change(close) / close[1] * volume)``."""
+    from pine.runtime import builtins as rb
+
+    return _stream(rb.Pvt(DEFAULT_NA_POLICY["cum"]), close, volume)

@@ -27,7 +27,7 @@ one bar raises `DuplicateKeyError` (catches copy-paste); inside Python loops use
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 import numpy as np
@@ -161,6 +161,49 @@ class _TA:
     def valuewhen(self, key, condition, source, occurrence=0):
         return self._state(key, _b.Valuewhen, occurrence).update(condition, source)
 
+    # -- batch F (unverified until a tools/capture_builtins.pine export is checked) ----------
+    def sum(self, key, source, length, na_policy=None):
+        """``math.sum`` (stateful like the ``ta.*`` built-ins, so it lives here)."""
+        return self._state(key, _b.Sum, length, _pol(na_policy, "sum")).update(source)
+
+    def wma(self, key, source, length, na_policy=None):
+        return self._state(key, _b.Wma, length, _pol(na_policy, "wma")).update(source)
+
+    def hma(self, key, source, length, na_policy=None):
+        return self._state(key, _b.Hma, length, _pol(na_policy, "hma")).update(source)
+
+    def variance(self, key, source, length, biased=True, na_policy=None):
+        pol = _pol(na_policy, "variance")
+        return self._state(key, _b.Variance, length, biased, pol).update(source)
+
+    def percentile_linear_interpolation(self, key, source, length, percentage, na_policy=None):
+        pol = _pol(na_policy, "percentile_linear_interpolation")
+        return self._state(key, _b.PercentileLinear, length, percentage, pol).update(source)
+
+    def pivothigh(self, key, source, leftbars, rightbars):
+        return self._state(key, _b.Pivothigh, leftbars, rightbars).update(source)
+
+    def pivotlow(self, key, source, leftbars, rightbars):
+        return self._state(key, _b.Pivotlow, leftbars, rightbars).update(source)
+
+    def fixnan(self, key, source):
+        return self._state(key, _b.Fixnan).update(source)
+
+    def cum(self, key, source, na_policy=None):
+        return self._state(key, _b.Cum, _pol(na_policy, "cum")).update(source)
+
+    def obv(self, key):
+        c = self._ctx
+        return self._state(key, _b.Obv, DEFAULT_NA_POLICY["cum"]).update(
+            c.close.value, c.volume.value
+        )
+
+    def pvt(self, key):
+        c = self._ctx
+        return self._state(key, _b.Pvt, DEFAULT_NA_POLICY["cum"]).update(
+            c.close.value, c.volume.value
+        )
+
 
 class Context:
     def __init__(self, bars: Bars, max_bars_back: int = 5000, bar_offset: int = 0):
@@ -237,6 +280,27 @@ class Context:
         self._prefix = full + "/"
         try:
             return fn(self, *args, **kwargs)
+        finally:
+            self._prefix = outer
+
+    def loop(self, key: str, iterable: Iterable):
+        """Pine ``for`` loop body: ``for i in ctx.loop("k", range(1, 4)): ...``.
+
+        Inside the body, keys may repeat from one iteration to the next, and every call site
+        in the body keeps **one** state shared by all iterations: a built-in advances on every
+        call (``n`` times per bar for ``n`` iterations) and ``s[1]`` of a series declared in
+        the body is its value from the previous *iteration*. That is hypothesis ``per_call``
+        of the ``loop_*`` groups in `pine.semantics` (**unverified** until an export is
+        checked). Leaving the loop with ``break`` is fine (the generator is closed)."""
+        full = self._claim("l", key)
+        outer = self._prefix
+        inner = full + "/"
+        try:
+            for item in iterable:
+                self._used = {u for u in self._used if not u.startswith(inner)}
+                self._prefix = inner
+                yield item
+                self._prefix = outer
         finally:
             self._prefix = outer
 
