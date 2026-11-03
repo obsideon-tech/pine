@@ -29,16 +29,27 @@ from numpy.typing import ArrayLike
 __all__ = ["bar_offset", "decay_adjusted", "e0_bound", "sync_point"]
 
 
-def bar_offset(columns: dict[str, np.ndarray]) -> int | None:
-    """True ``bar_index`` of the first exported row, from a ``bar_index`` column; ``None`` if
-    absent. Raises if the column is not consecutive integers (rows missing or reordered)."""
-    if "bar_index" not in columns:
+def bar_offset(columns: dict[str, np.ndarray], name: str = "bar_index") -> int | None:
+    """True ``bar_index`` of the first exported row, from the ``name`` column; ``None`` if
+    absent. Raises, naming the column and the first offending row, if the column is not
+    consecutive non-negative integers (rows missing, repeated or reordered, or `na`)."""
+    if name not in columns:
         return None
-    b = np.asarray(columns["bar_index"], dtype=np.float64)
+    b = np.asarray(columns[name], dtype=np.float64)
     if b.size == 0:
         return 0
-    if np.isnan(b).any() or not np.all(np.diff(b) == 1) or b[0] != int(b[0]) or b[0] < 0:
-        raise ValueError("bar_index column is not consecutive non-negative integers")
+    nan = np.flatnonzero(np.isnan(b))
+    if nan.size:
+        raise ValueError(f"{name}: na at row {int(nan[0])} ({nan.size} na rows in total)")
+    breaks = np.flatnonzero(np.diff(b) != 1)
+    if breaks.size:
+        i = int(breaks[0])
+        raise ValueError(
+            f"{name}: not consecutive at row {i + 1} ({b[i]:g} then {b[i + 1]:g}; "
+            f"{breaks.size} breaks in total)"
+        )
+    if b[0] != int(b[0]) or b[0] < 0:
+        raise ValueError(f"{name}: first value {b[0]:g} is not a non-negative integer")
     return int(b[0])
 
 

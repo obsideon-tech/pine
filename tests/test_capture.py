@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 from test_reference import synthetic_export
 
@@ -103,3 +104,27 @@ def test_check_errors_are_actionable(tmp_path, capsys):
     assert "manifest not found" in err and "python -m pine.capture manifest" in err
     assert main(["check", str(tmp_path / "EXPORT.csv")]) == 2
     assert "export not found" in capsys.readouterr().err
+
+
+def test_broken_strategy_bar_index_is_reported_and_others_still_run(tmp_path, capsys):
+    csv = combined_export(tmp_path)
+    exp = load_tradingview_csv(csv, timeframe="60")
+    cols = dict(exp.columns)
+    sbi = np.array(cols["strat_bar_index"])
+    sbi[40] = np.nan
+    cols["strat_bar_index"] = sbi
+    broken = tmp_path / "broken.csv"
+    write_tradingview_csv(TradingViewExport(exp.bars, cols, exp.header, exp.time_format), broken)
+    assert main(["check", str(broken), "--timeframe", "60"]) == 1
+    out = capsys.readouterr().out
+    assert "## Could not run" in out and "strat_bar_index: na at row 40" in out
+    assert "## Gap-free columns" in out and "## Pine semantics" in out
+
+
+def test_bar_offset_messages():
+    from pine.truncation import bar_offset
+
+    with pytest.raises(ValueError, match=r"x: not consecutive at row 2 \(1 then 5"):
+        bar_offset({"x": np.array([0.0, 1.0, 5.0])}, "x")
+    with pytest.raises(ValueError, match="first value -1"):
+        bar_offset({"bar_index": np.array([-1.0, 0.0])})

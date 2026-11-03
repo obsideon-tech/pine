@@ -313,6 +313,9 @@ export-derived value in the test docstring:
   described;
 - `varip` on the live (last, unconfirmed) bar keeps intrabar ticks, so it differs from `var`
   there; observed on DOGE/BTC exports (§12). Checks exclude that row.
+- a strategy (`calc_on_every_tick = false`) is not calculated on the live bar until it
+  closes: all strategy columns are `na` on an export's last row when it was taken mid-bar
+  (observed, DOGE 1D, 2026-11-03). The strategy check drops that row.
 - execution model and scalar rules (`pine.runtime`, §11 E1). **Confirmed by export
   (2026-11-03, §12):** `math.round` ties round **away from zero** (`round(-2.5) = -3`; the
   earlier `floor(x + 0.5)` assumption was wrong and is fixed); `%` truncates (`-7 % 3 = -1`);
