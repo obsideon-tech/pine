@@ -110,20 +110,40 @@ def test_rsi_hand_computed_length_2():
 # ---------- na propagation and re-seeding ----------
 
 
-def test_sma_na_in_window_propagates():
+def test_sma_na_in_window_propagates_when_asked():
     x = np.arange(20.0)
     x[10] = np.nan
-    out = ta.sma(x, 3)
+    out = ta.sma(x, 3, na_policy="propagate")
     assert np.isnan(out[10:13]).all() and not np.isnan(out[13:]).any()
 
 
 @pytest.mark.parametrize("fn", [ta.ema, ta.rma])
-def test_recursive_ma_reseeds_from_sma_after_na(fn):
+def test_recursive_ma_reseeds_from_sma_after_na_when_propagating(fn):
+    x = np.arange(30.0)
+    x[10] = np.nan
+    out = fn(x, 3, na_policy="propagate")
+    assert np.isnan(out[10:13]).all()
+    assert out[13] == pytest.approx(ta.sma(x, 3, na_policy="propagate")[13])  # fresh seed
+
+
+@pytest.mark.parametrize("fn", [ta.ema, ta.rma])
+def test_recursive_ma_default_carries_state_across_na(fn):
+    # Observed TradingView behaviour (PINE_PLAN.md §12): na out on the na bar, state kept.
     x = np.arange(30.0)
     x[10] = np.nan
     out = fn(x, 3)
-    assert np.isnan(out[10:13]).all()
-    assert out[13] == pytest.approx(ta.sma(x, 3)[13])  # fresh SMA seed
+    assert np.isnan(out[10]) and not np.isnan(out[11])
+    np.testing.assert_array_equal(out, fn(x, 3, na_policy="skip_na_out"))
+
+
+def test_windowed_default_skips_na():
+    x = np.arange(20.0)
+    x[10] = np.nan
+    out = ta.sma(x, 3)
+    assert out[10] == pytest.approx((7 + 8 + 9) / 3)  # value on the na bar, window over valid
+    assert out[11] == pytest.approx((8 + 9 + 11) / 3)
+    for f in (ta.stdev, ta.highest, ta.lowest):
+        np.testing.assert_array_equal(f(x, 3), f(x, 3, na_policy="skip"))
 
 
 def test_inputs_not_mutated():
@@ -170,7 +190,14 @@ def test_ma_bounded_by_window_range(x, n):
 def test_rsi_positive_affine_invariance_and_bounds(x, n, a, b):
     r = ta.rsi(x, n)
     assert ((r[n:] >= 0) & (r[n:] <= 100)).all()
-    np.testing.assert_allclose(ta.rsi(a * x + b, n), r, atol=1e-7)
+    y = a * x + b
+    # Invariance holds in exact arithmetic; in float64 the transform can round a tiny move to
+    # zero (found by a random run: near-constant x, b = 1), flipping RSI's 0/100 branches.
+    # Require that every bar-to-bar move keeps its sign and is not destroyed by rounding.
+    dx, dy = np.diff(x), np.diff(y)
+    assume(np.array_equal(np.sign(dx), np.sign(dy)))
+    assume(np.all((dx == 0) | (np.abs(dy) > 1e-9 * np.abs(y[1:]))))
+    np.testing.assert_allclose(ta.rsi(y, n), r, atol=1e-7)
 
 
 @settings(max_examples=examples(60), deadline=None)
@@ -230,10 +257,10 @@ def test_highest_lowest_on_ramp():
     assert np.isnan(ta.highest(t, 5)[:4]).all() and np.isnan(ta.lowest(t, 5)[:4]).all()
 
 
-def test_highest_na_in_window_propagates():
+def test_highest_na_in_window_propagates_when_asked():
     x = np.arange(20.0)
     x[10] = np.nan
-    out = ta.highest(x, 3)
+    out = ta.highest(x, 3, na_policy="propagate")
     assert np.isnan(out[10:13]).all() and not np.isnan(out[13:]).any()
 
 
@@ -286,7 +313,8 @@ def test_atr_na_close_makes_next_true_range_na():
     h, lo, c = _bars(np.random.default_rng(6))
     c[30] = np.nan
     out = ta.atr(h, lo, c, 5)
-    assert not np.isnan(out[30]) and np.isnan(out[31:36]).all() and not np.isnan(out[36])
+    # The true range at 31 is na; atr inherits rma's default (state carried, na out).
+    assert not np.isnan(out[30]) and np.isnan(out[31]) and not np.isnan(out[32])
 
 
 @settings(max_examples=examples(40), deadline=None)

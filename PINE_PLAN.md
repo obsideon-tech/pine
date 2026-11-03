@@ -155,6 +155,25 @@ Pine's state depends on the first bar loaded on the chart, not the first bar the
 at. Python must start on the same first bar as the export. If it cannot (truncated export,
 data gap), only convergence mode (§5.3) applies.
 
+**Truncated exports are the normal case** (observed 2026-11-03: the NFLX daily export began
+at `bar_index` 3116 of 6151). Since then (`pine.truncation`), the checkers read the true bar
+offset from the exported `bar_index` column (or, for a reference-only export, infer it modulo
+50 from the `src_na` gap pattern) and compare only what the export can establish:
+
+| Kind | Method | What is verified | What is not |
+|---|---|---|---|
+| windowed (sma, stdev, highest, lowest, tr) | exclude Python's own warm-up | every later bar, exactly | — |
+| seeded recursive (ema, rma, atr) | remove the predicted residual `r_w(1−α)^(t−w)`, compare from `w` | recursion and `α` on every bar | the seed |
+| RSI | convergence bound (B3) | bars after the bound | the seed |
+| probes keyed to `bar_index` | true bar numbers | exact | — |
+| `var` running sum | anchor on the first exported value | every increment | the pre-export sum |
+| stateful ports, recursive `*_na` | observed synchronisation row, which must fall in the first half of the export | every later bar | state before sync |
+
+A column that compares fewer than 100 bars after exclusions is **inconclusive**, not a pass
+(`ColumnReport.min_compared`). A probe whose hypotheses agree on every compared row (e.g.
+`barssince` before the first event, when the export starts later) is reported as *not
+decidable in this export* rather than confirmed.
+
 ### 5.5 Discrete outputs
 
 Booleans and categorical outputs (`ta.crossover`, Supertrend direction, signal flags) are
@@ -281,22 +300,24 @@ export-derived value in the test docstring:
   returns `na` on the first bar **(unverified)**;
 - `ta.crossover`/`crossunder`: comparisons with `na` are false, so output is never `na`
   (v6 semantics; v5 may differ);
-- **possible systematic difference** (now testable: `na_policy` and the capture script's
-  `*_na` columns, §10 A2): recent manual pages may say that `na` values in `source` are
-  *ignored*, with the window extending back over `length` non-`na` values. If
-  so, the propagate-`na` behaviour used here for `sma`, `ema`, `rma`, `stdev`, `highest` and
-  `lowest` is wrong at gaps (it is unaffected on gap-free data). Settle with an export of a
-  series containing `na` before any consumer relies on behaviour at gaps;
+- **`na` inside windows — decided by export (2026-11-03, §12):** `sma`, `stdev`, `highest`,
+  `lowest` *skip* `na` (window over the last `length` valid values; a value is output on the
+  `na` bar too); `ema`, `rma`, `rsi` carry their state across `na` and output `na` on the `na`
+  bar (`skip_na_out`); `ta.change` propagates `na`. Now the defaults
+  (`pine.ta.DEFAULT_NA_POLICY`). `atr` inherits `rma`'s default by construction — not yet
+  observed directly;
 - facts the lint rules rest on **(unverified)**: `lookahead` is the 5th positional parameter
   of `request.security` (after symbol, timeframe, expression, gaps); `alert()`'s default
   `freq` is `alert.freq_once_per_bar` (fires intrabar); a negative literal history index
   does not compile; `barstate.isnew`/`islast` differ between history and realtime as
   described;
-- execution model and scalar rules (`pine.runtime`, §11 E1): built-ins and user functions in
-  conditional code advance per call; call sites have separate histories; `math.round` ties go
-  up (`floor(x + 0.5)`); `%` truncates; `7 / 2 = 3.5` for ints; `int()` truncates toward zero;
-  `na == na` is false; `barssince`/`valuewhen` are `na` before the first event;
-  `ta.change` propagates `na` **(all unverified; probed by `tools/capture_semantics.pine`)**;
+- execution model and scalar rules (`pine.runtime`, §11 E1). **Confirmed by export
+  (2026-11-03, §12):** `math.round` ties round **away from zero** (`round(-2.5) = -3`; the
+  earlier `floor(x + 0.5)` assumption was wrong and is fixed); `%` truncates (`-7 % 3 = -1`);
+  `7 / 2 = 3.5` for series and const ints; `int()` truncates toward zero; `na == na` is false.
+  **Still unverified** (that export started mid-history; re-check with the offset-aware
+  checker): conditional built-ins and functions advance per call; separate call-site
+  histories; `barssince`/`valuewhen` before the first event; `ta.change` around `na`;
 - `ta.rsi` zero branches: `down == 0 → 100` checked before `up == 0 → 0`, so a flat series
   gives 100 **(unverified)**;
 - `ta.stdev`'s `biased` default (believed `true`, i.e. population) **(unverified)**;
@@ -568,11 +589,14 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         `check_export` in aligned mode on every row of the §10 A1 matrix, each export with a
         manifest (numbers only or kept local, per the terms item).
       - _Progress 2026-11-03:_ **tooling done** — `tools/reference_capture.pine` (31 plots),
-        `python -m pine.reference EXPORT.csv --manifest EXPORT.yaml`, manifest template
+        `python -m pine.reference` (now via `python -m pine.capture`, docs/CAPTURE.md), manifest template
         `tools/reference_capture.example.yaml`. Consistency tests tie the Pine constants and
         plot titles to `pine.reference`; the script is lint-clean. Synthetic end-to-end tests
         prove the plumbing only. **Remaining: the exports themselves (owner action).**
-- [ ] **[high] A2 — `na_policy` switch and the opposite-policy mutant** (§10 A2)
+- [x] **[high] A2 — `na_policy` switch and the opposite-policy mutant** (§10 A2) — **decided
+      2026-11-03** by the NFLX export (§12): windowed built-ins `skip`, recursive ones
+      `skip_na_out`; these are now the defaults (`pine.ta.DEFAULT_NA_POLICY`) in `pine.ta` and
+      `pine.runtime`. The switch is kept as an override rather than removed (see §12).
       - _Raised:_ 2026-11-03
       - _Why:_ the `na`-window rule is the single most consequential unverified semantic.
       - _Done when:_ both policies implemented, the mutant is detected, and an export with `na`
@@ -703,11 +727,11 @@ any built-in is called "verified":
 Tradeoff: one capture script is fast but couples every built-in to one chart setup; the matrix
 rows compensate. Export terms are still open, so commit numbers only or keep files local.
 
-**How to run A1/A2 (owner):** add `tools/reference_capture.pine` to a chart for one matrix
-row; export chart data with the chart's full loaded history; save the CSV and a manifest
-copied from `tools/reference_capture.example.yaml` locally (not committed until the terms
-item is settled); run `uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml`.
-The output has two parts:
+**How to run A1/A2 and E1 (owner):** follow [`docs/CAPTURE.md`](docs/CAPTURE.md). Both
+capture scripts go on one chart, there is one export, `python -m pine.capture manifest`
+writes the manifest, and `python -m pine.capture check` runs every applicable check into one
+report. (`pine.reference` and `pine.semantics` remain available individually.) The reference
+part of the report has two sections:
 
 - *Gap-free columns* in aligned mode. `src_na` doubles as the history-alignment check
   (§5.4): its gap pattern is keyed to `bar_index`, so a truncated export fails it, and then
@@ -726,7 +750,10 @@ with different constants if any built-in's code branches on length.
 functions an `na_policy` (`"propagate"` as now, `"skip"` = extend the window back over `length`
 non-`na` values), and add the other policy as a mutant so the harness is shown to separate
 them. Remove the switch once settled. Tradeoff: temporary API surface; the alternative
-(guessing) risks a systematic error that every current test would miss.
+(guessing) risks a systematic error that every current test would miss. *Status
+2026-11-03: decided by export (§12) — windowed `skip`, recursive `skip_na_out`; adopted as
+defaults. The switch stays as an explicit override: one export and one gap pattern decided
+it, and keeping the alternatives costs little while a second capture is outstanding.*
 
 **A3. Tolerances that account for rounded inputs.** If the export rounds inputs to `δ_in` and
 outputs to `δ_out`, the port's legitimate error is bounded by `L·δ_in + δ_out`, where `L` is
@@ -865,8 +892,8 @@ and Python-side competing hypotheses decided by an export (the `na_policy` patte
 
 These probes can go on the same chart and export session as A1/A2.
 
-*Status 2026-11-03: tooling done.* `tools/capture_semantics.pine` + `pine.semantics`
-(`python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml`). 20 probe groups; the expected
+*Status 2026-11-03: tooling done.* `tools/capture_semantics.pine` + `pine.semantics`; run
+through `python -m pine.capture check` per [`docs/CAPTURE.md`](docs/CAPTURE.md). 20 probe groups; the expected
 hypothesis of each (what `pine.runtime` implements) and its alternatives:
 
 | Group | Expected (runtime) | Alternatives |
@@ -874,14 +901,15 @@ hypothesis of each (what `pine.runtime` implements) and its alternatives:
 | `cond_ema`, `cond_sma`, `cond_userfn`, `cond_crossover` | `per_call` | `every_bar` |
 | `call_sites` | `separate` | `shared` |
 | `branch_hist` | `per_bar` | `last_assigned` |
-| `rounding` (2.5, −2.5, 3.5) | `half_up` = floor(x + 0.5) | `half_away`, `half_even` |
+| `rounding` (2.5, −2.5, 3.5) | `half_away` (**confirmed** 2026-11-03) | `half_up` (the original assumption, refuted), `half_even` |
 | `mod` (−7 % 3) | `truncated` (−1) | `floored` (2) |
 | `div_series`, `div_const` (7 / 2) | `float` (3.5) | `int` (3) |
 | `int_trunc` (int(−2.7)) | `toward_zero` | `floor` |
 | `na_eq_na` | `false` | `true` |
 | `barssince`, `valuewhen` | `na_before_first` | count from start / zero |
 | `change_na` | `propagate` | `last_valid` |
-| `alignment`, `var`, `supertrend`, `trail_stop`, `regime` | single (parity checks) | — |
+| `regime` (state machine with `else if ta.crossunder`) | `per_call` | `every_bar` (they differ after a one-bar whipsaw, found on long synthetic data) |
+| `alignment`, `var`, `supertrend`, `trail_stop` | single (parity checks) | — |
 
 Every expectation is **unverified**. Any mismatch makes the checker exit 1 and name the
 group; the fix is to change the runtime (and its scalar helper) to the observed hypothesis.
@@ -995,3 +1023,54 @@ E–H would multiply unverified semantics.
 What would most change the plan: an export showing that a current assumption is wrong (seeding,
 `na` handling, rounding). That is cheap to obtain and invalidates work built on top of it, so
 it stays first.
+
+## 12. Evidence log (external results)
+
+Results from real TradingView exports. Each row records what a specific export established,
+so "verified" claims can be traced. Exports themselves are kept outside the repository (§8).
+
+### 2026-11-03 — BATS:NFLX, 1D, both capture scripts
+
+Export rows 3035; first row `bar_index` 3116 of 6151 (the export started mid-history, which the
+checkers did not yet handle: most rows failed on warm-up `na` and history-dependent values).
+What it nevertheless established:
+
+| Item | Result |
+|---|---|
+| `ta.sma`, `ta.stdev` (population and sample), `ta.highest`, `ta.lowest`, `ta.tr` | **match** once Python's window is full: max error 1.3e-12 (stdev), 4.3e-14 (sma), exactly 0 (highest, lowest, tr) |
+| `ta.crossover`, `ta.crossunder` (on exported EMAs) | **match** exactly |
+| `ta.ema`, `ta.rma`, `ta.atr`, `ta.rsi` | error largest at Python's seed bar and shrinking: consistent with a pure seed difference; recursion not yet verified (needs the decay check, now implemented) |
+| `math.round` | **ties away from zero** — runtime changed (was `floor(x + 0.5)`) |
+| `%`, int division, `int()`, `na == na` | **as expected**: −1, 3.5, −2, false |
+| execution-model probes, `na` policy, ports | not decidable from this run (history offset); re-run `python -m pine.capture check` on the same file with the offset-aware checker |
+
+Consequences: `pine.truncation` (offset-aware, history-robust checks), `min_compared`
+(no vacuous passes), the regime probe split into `per_call`/`every_bar`, and a test-assumption
+bug fixed in the RSI affine-invariance property test (found by a random-seed run while
+validating these changes).
+
+### 2026-11-03 — same export, re-checked with the offset-aware checker
+
+**Overall: PASS** (exit 0). With the export's `bar_index` offset (3116) handled:
+
+| Item | Result |
+|---|---|
+| `sma`, `ema`, `rma`, `rsi`, `atr`, `stdev` (both), `highest`, `lowest`, `tr` (both), `ema(9)`, `ema(21)` | **match** over 2647–3034 bars each; max abs error 7.7e-12 (rsi), all others ≤ 1.3e-12, highest/lowest/tr exactly 0 |
+| EMA / RMA / ATR recursion and `α` | **verified on every bar** by the exact residual-decay check; seeds remain unverified (export starts mid-history) |
+| `crossover`, `crossunder` | **match** exactly (0 excused flips) |
+| `na` inside windows | **decided**: `sma`/`stdev`/`highest`/`lowest` → `skip`; `ema`/`rma`/`rsi` → `skip_na_out` (each column matched exactly one policy) — adopted as defaults |
+| Execution model | **confirmed**: conditional `ta.ema`/`ta.sma`/user function/`ta.crossover` advance per call; call sites separate; `var`/`varip` increments; branch history per bar; `ta.change` propagates `na` |
+| Scalar rules | **confirmed**: rounding ties away from zero, truncated `%`, fractional int division, `int()` toward zero, `na == na` false |
+| Ports | Supertrend (manual code), ratcheting stop, regime machine (`per_call`): **match** after synchronising at rows 259 / 369 / 321 |
+| `barssince` / `valuewhen` before the first event | not decidable from this export (needs one starting at bar 0) |
+
+Changes made on this evidence: `pine.ta.DEFAULT_NA_POLICY` and per-built-in defaults in
+`pine.ta` and `pine.runtime` (incremental built-ins now implement `skip` / `skip_na_out`,
+equal to `pine.ta` bit for bit under every policy); mutation-suite expectations re-derived
+for the new defaults (`highest` with `na → 0` is detected three bars after the gap on the
+fixture, data-dependently, since a 0 cannot raise a maximum).
+
+**Still open:** seeding of `ema`/`rma`/`atr`/`rsi` and pre-event `barssince`/`valuewhen` —
+next export: a chart whose whole history fits one export (e.g. NFLX weekly, ≈1 270 bars), so
+it starts at `bar_index` 0. Also outstanding: the rest of the §10 A1 matrix (price < 1,
+> 10 000, opening gaps, DST).

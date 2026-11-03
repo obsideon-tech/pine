@@ -30,15 +30,15 @@ def nz(x, replacement: float = 0.0) -> float:
 
 
 def round_(x, precision: int | None = None) -> float:
-    """``math.round``; expected: ties round up, ``floor(x + 0.5)`` (Java-like), so
-    ``round(-2.5) = -2``. Alternatives probed: half away from zero, half to even."""
+    """``math.round``: ties round **away from zero** (``round(2.5) = 3``,
+    ``round(-2.5) = -3``). **Confirmed** by a TradingView export (2026-11-03,
+    ``tools/capture_semantics.pine``, rounding group); the earlier assumption
+    ``floor(x + 0.5)`` was wrong for negative ties. ``precision`` handling is unverified."""
     v = _f(x)
     if math.isnan(v):
         return NA
-    if precision is None:
-        return float(math.floor(v + 0.5))
-    k = 10.0**precision
-    return math.floor(v * k + 0.5) / k
+    k = 1.0 if precision is None else 10.0**precision
+    return math.copysign(math.floor(abs(v) * k + 0.5), v) / k
 
 
 def mod(a, b) -> float:

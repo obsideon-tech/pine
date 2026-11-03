@@ -55,16 +55,23 @@ Each finding says whether the problem is established (`definite`) or whether saf
 be proven (`possible`). Rules and their known blind spots are in
 [`PINE_PLAN.md` §6](PINE_PLAN.md#6-lint-soundness).
 
-Checking `pine.ta` against TradingView (the step that turns "unverified" into "verified"): add
-`tools/reference_capture.pine` to a chart, export chart data, write a manifest from
-`tools/reference_capture.example.yaml`, then:
+### Run the TradingView capture
+
+This is the step that turns "unverified" into "verified". Put `tools/reference_capture.pine`
+and `tools/capture_semantics.pine` on one chart, export the chart data, then run (with your
+own file name and chart settings):
 
 ```bash
-uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml
+uv run python -m pine.capture manifest ~/Downloads/aapl_1d.csv --symbol NASDAQ:AAPL --timeframe 1D --timezone America/New_York
 ```
 
-It reports aligned-mode parity for every core built-in and which `na`-handling hypothesis
-TradingView follows. See [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps).
+```bash
+uv run python -m pine.capture check ~/Downloads/aapl_1d.csv --out ~/Downloads/aapl_1d_report.md
+```
+
+The report covers parity for every core built-in, the `na`-handling decision, and the Pine
+execution semantics `pine.runtime` assumes. Step-by-step guide, including where the menus are
+and how to read the report: [`docs/CAPTURE.md`](docs/CAPTURE.md).
 
 Porting stateful or conditional logic: write the port in Pine's shape on `pine.runtime`, which
 runs the script bar by bar with Pine's execution model (history per execution, `var`, separate
@@ -88,23 +95,23 @@ def script(ctx):
 result = run(script, exp.bars)
 ```
 
-The semantics `pine.runtime` assumes are themselves checked by a second capture script:
-
-```bash
-uv run python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml
-```
+The semantics `pine.runtime` assumes are checked by the second capture script (see
+[`docs/CAPTURE.md`](docs/CAPTURE.md)).
 
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
 manifest describing how it was produced; see `src/pine/manifest.py`.
 
 ## Known gaps
 
-- **No external verification yet.** Every built-in is checked against closed-form cases and
-  property tests derived from the same reading of the Pine manual; none against TradingView
-  output. Treat results as unverified.
-- **`na` inside windows** may be handled differently by TradingView. Three hypotheses are
-  implemented (`na_policy`); the default `propagate` is unconfirmed until a capture export
-  decides. Gap-free data is unaffected.
+- **External verification has started, not finished.** One TradingView export (NFLX daily,
+  2026-11-03) matched every core built-in after warm-up, confirmed the runtime's execution
+  model and scalar rules, decided how built-ins treat `na`, and corrected `math.round`. Not yet
+  verified: seeding of EMA/RMA/ATR/RSI (that export started mid-history) and the rest of the
+  coverage matrix. See [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
+- **`na` inside windows** follows the observed behaviour by default: `sma`, `stdev`,
+  `highest`, `lowest` skip `na`; `ema`, `rma`, `rsi` carry state across `na` and output `na`
+  on the `na` bar (`pine.ta.DEFAULT_NA_POLICY`; override with `na_policy=`). Observed on one
+  export so far.
 - **Rounded inputs** are accounted for only when asked (`input_rounding=` / `--inputs-rounded`):
   the allowance is provably sufficient but widens tolerances, so it is off by default.
 - **Lint** traces only simple variables (assigned once at the top level) and sees alert gating
@@ -113,8 +120,8 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
   `--format json`); HTML is deferred.
 
 - **Complex indicators are not yet supported with a parity guarantee.** `pine.runtime` now
-  provides Pine's bar-by-bar execution model and scalar rules, but those semantics are
-  *expected*, not yet confirmed by a `capture_semantics.pine` export. Still missing: sessions,
+  provides Pine's bar-by-bar execution model and scalar rules, confirmed by one
+  `capture_semantics.pine` export (§12). Still missing: sessions,
   `request.security`, and most built-ins beyond the ones above. Parity claims cover confirmed historical bars only; live/realtime behaviour cannot
   be checked from exports.
 

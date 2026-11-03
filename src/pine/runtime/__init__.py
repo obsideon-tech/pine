@@ -35,6 +35,7 @@ import numpy as np
 from pine.bars import Bars
 from pine.runtime import builtins as _b
 from pine.runtime.scalar import NA
+from pine.ta import DEFAULT_NA_POLICY
 
 __all__ = ["NA", "Context", "DuplicateKeyError", "RunResult", "Series", "run"]
 
@@ -85,6 +86,10 @@ class Series:
         return f"Series(value={self.value!r}, executions={len(self._h)})"
 
 
+def _pol(na_policy, name: str) -> str:
+    return DEFAULT_NA_POLICY[name] if na_policy is None else na_policy
+
+
 class _TA:
     """``ctx.ta``: key-addressed incremental built-ins."""
 
@@ -103,26 +108,27 @@ class _TA:
             )
         return node
 
-    def sma(self, key, source, length):
-        return self._state(key, _b.Sma, length).update(source)
+    # ``na_policy=None`` means the observed default (`pine.ta.DEFAULT_NA_POLICY`).
+    def sma(self, key, source, length, na_policy=None):
+        return self._state(key, _b.Sma, length, _pol(na_policy, "sma")).update(source)
 
-    def ema(self, key, source, length):
-        return self._state(key, _b.Ema, length).update(source)
+    def ema(self, key, source, length, na_policy=None):
+        return self._state(key, _b.Ema, length, _pol(na_policy, "ema")).update(source)
 
-    def rma(self, key, source, length):
-        return self._state(key, _b.Rma, length).update(source)
+    def rma(self, key, source, length, na_policy=None):
+        return self._state(key, _b.Rma, length, _pol(na_policy, "rma")).update(source)
 
-    def rsi(self, key, source, length):
-        return self._state(key, _b.Rsi, length).update(source)
+    def rsi(self, key, source, length, na_policy=None):
+        return self._state(key, _b.Rsi, length, _pol(na_policy, "rsi")).update(source)
 
-    def stdev(self, key, source, length, biased=True):
-        return self._state(key, _b.Stdev, length, biased).update(source)
+    def stdev(self, key, source, length, biased=True, na_policy=None):
+        return self._state(key, _b.Stdev, length, biased, _pol(na_policy, "stdev")).update(source)
 
-    def highest(self, key, source, length):
-        return self._state(key, _b.Highest, length).update(source)
+    def highest(self, key, source, length, na_policy=None):
+        return self._state(key, _b.Highest, length, _pol(na_policy, "highest")).update(source)
 
-    def lowest(self, key, source, length):
-        return self._state(key, _b.Lowest, length).update(source)
+    def lowest(self, key, source, length, na_policy=None):
+        return self._state(key, _b.Lowest, length, _pol(na_policy, "lowest")).update(source)
 
     def tr(self, handle_na: bool = False) -> float:
         """``ta.tr`` / ``ta.tr(handle_na)``: stateless, from the bar series."""

@@ -89,7 +89,14 @@ def test_runtime_reproduces_expected_hypothesis(group, bars, runtime_result):
         np.testing.assert_array_equal(runtime_result[col], v, err_msg=f"{group}/{col}")
 
 
-@pytest.mark.parametrize("group", sorted(g for g in GROUPS if len(GROUPS[g]) > 1))
+# Groups whose hypotheses differ only on events this 300-bar fixture lacks; their
+# discrimination is shown on the long history in tests/test_truncation.py.
+NEEDS_LONG_DATA = {"regime"}  # needs a one-bar whipsaw
+
+
+@pytest.mark.parametrize(
+    "group", sorted(g for g in GROUPS if len(GROUPS[g]) > 1 and g not in NEEDS_LONG_DATA)
+)
 def test_hypotheses_are_distinguishable(group, bars):
     hyps = {h: f(bars) for h, f in GROUPS[group].items()}
     names = sorted(hyps)
@@ -128,13 +135,18 @@ def test_runtime_export_decides_every_group_as_expected(bars, runtime_result, tm
     path = _export_from(bars, dict(runtime_result.columns), tmp_path / "sem.csv")
     exp = load_tradingview_csv(path, timeframe="60")
     decisions = decide(exp)
-    assert {d.group: d.matching for d in decisions} == {g: (EXPECTED[g],) for g in GROUPS}
+    got = {d.group: d.matching for d in decisions}
+    for g in GROUPS:
+        if g in NEEDS_LONG_DATA:
+            assert EXPECTED[g] in got[g]
+        else:
+            assert got[g] == (EXPECTED[g],), g
     assert main([str(path), "--timeframe", "60"]) == 0
 
 
 @pytest.mark.parametrize(
     "group, alt",
-    [("cond_ema", "every_bar"), ("rounding", "half_away"), ("branch_hist", "last_assigned")],
+    [("cond_ema", "every_bar"), ("rounding", "half_up"), ("branch_hist", "last_assigned")],
 )
 def test_alternative_behaviour_is_detected_and_named(
     bars, runtime_result, tmp_path, capsys, group, alt
@@ -152,14 +164,14 @@ def test_alternative_behaviour_is_detected_and_named(
     )
 
 
-def test_truncated_export_fails_alignment(bars, runtime_result, tmp_path):
-    path = _export_from(bars, dict(runtime_result.columns), tmp_path / "t.csv")
-    lines = path.read_text().splitlines(keepends=True)
-    path.write_text(lines[0] + "".join(lines[11:]))
-    d = next(
-        d for d in decide(load_tradingview_csv(path, timeframe="60")) if d.group == "alignment"
-    )
-    assert d.matching == ()
+def test_non_consecutive_bar_index_is_rejected(bars, runtime_result, tmp_path):
+    cols = dict(runtime_result.columns)
+    bi = np.array(cols["bar_index"])
+    bi[5] += 1
+    cols["bar_index"] = bi
+    path = _export_from(bars, cols, tmp_path / "t.csv")
+    with pytest.raises(ValueError, match="consecutive"):
+        decide(load_tradingview_csv(path, timeframe="60"))
 
 
 def test_cli_json_and_errors(bars, runtime_result, tmp_path, capsys):
@@ -170,5 +182,7 @@ def test_cli_json_and_errors(bars, runtime_result, tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert {p["group"] for p in payload} == set(GROUPS) and all(p["ok"] for p in payload)
     assert main([str(GAPPED), "--timeframe", "60"]) == 2
-    with pytest.raises(SystemExit):
-        main([str(path)])
+    assert main([str(path)]) == 2
+    assert main([str(path), "--manifest", str(tmp_path / "EXPORT.yaml")]) == 2
+    err = capsys.readouterr().err
+    assert "manifest not found" in err and "python -m pine.capture manifest" in err

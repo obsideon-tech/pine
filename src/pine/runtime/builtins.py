@@ -5,7 +5,10 @@ Pine evaluates built-ins inside conditional code (expected hypothesis ``per_call
 ``tools/capture_semantics.pine``). Called on every bar, each one reproduces the vectorised
 `pine.ta` function bit for bit (same arithmetic order); ``tests/test_runtime.py`` enforces it.
 
-Only the ``propagate`` na policy is implemented (§10 A2 undecided).
+`na` handling follows `pine.ta.DEFAULT_NA_POLICY` (observed TradingView behaviour,
+PINE_PLAN.md §12): windowed built-ins ``skip`` `na` (window over the last ``length`` valid
+values, value also on `na` bars); recursive ones carry state across `na` and output `na` on
+`na` bars (``skip_na_out``). ``propagate`` remains available as an override.
 """
 
 from __future__ import annotations
@@ -14,7 +17,15 @@ import math
 
 import numpy as np
 
+from pine.ta import NA_POLICIES
+
 NAN = math.nan
+
+
+def _check(policy: str) -> str:
+    if policy not in NA_POLICIES:
+        raise ValueError(f"na_policy must be one of {NA_POLICIES}, got {policy!r}")
+    return policy
 
 
 def _f(x) -> float:
@@ -36,23 +47,48 @@ class _Window:
         return len(self.h) == self.n
 
 
-class Sma:
-    def __init__(self, length: int):
-        self.w = _Window(length)
+class _ValidWindow:
+    """Last ``n`` *valid* values (skip policies); ``ready(own_na)`` says whether to output."""
 
-    def update(self, x) -> float:
-        self.w.push(_f(x))
-        if not self.w.full:
-            return NAN
-        n, s = self.w.n, 0.0
-        for v in reversed(self.w.h):  # newest first, as pine.ta.sma
+    def __init__(self, n: int, policy: str):
+        self.w = _Window(n)
+        self.policy = policy
+
+    def push(self, x: float) -> bool:
+        own_na = math.isnan(x)
+        if not own_na:
+            self.w.push(x)
+        return self.w.full and not (own_na and self.policy == "skip_na_out")
+
+
+class Sma:
+    def __init__(self, length: int, policy: str = "skip"):
+        self.policy = _check(policy)
+        self.w = _Window(length) if policy == "propagate" else None
+        self.vw = None if policy == "propagate" else _ValidWindow(length, policy)
+
+    def _mean(self, h: list[float], n: int) -> float:
+        s = 0.0
+        for v in reversed(h):  # newest first, as pine.ta.sma
             s += v / n
         return s
 
+    def update(self, x) -> float:
+        x = _f(x)
+        if self.vw is not None:
+            if not self.vw.push(x):
+                return NAN
+            return self._mean(self.vw.w.h, self.vw.w.n)
+        self.w.push(x)
+        if not self.w.full:
+            return NAN
+        return self._mean(self.w.h, self.w.n)
+
 
 class _Seeded:
-    def __init__(self, length: int, alpha: float):
-        self.sma = Sma(length)
+    def __init__(self, length: int, alpha: float, policy: str):
+        self.policy = _check(policy)
+        self.sma = Sma(length, "propagate" if policy == "propagate" else "skip")
         self.alpha = alpha
         self.prev = NAN
 
@@ -60,24 +96,30 @@ class _Seeded:
         x = _f(x)
         seed = self.sma.update(x)
         a = self.alpha
+        if self.policy != "propagate":
+            # State is carried across na bars (pine.ta._seeded_recursive, skip policies).
+            if math.isnan(x):
+                return self.prev if self.policy == "skip" else NAN
+            self.prev = seed if math.isnan(self.prev) else a * x + (1.0 - a) * self.prev
+            return self.prev
         cur = seed if math.isnan(self.prev) else a * x + (1.0 - a) * self.prev
         self.prev = cur
         return cur
 
 
 class Ema(_Seeded):
-    def __init__(self, length: int):
-        super().__init__(length, 2.0 / (length + 1))
+    def __init__(self, length: int, policy: str = "skip_na_out"):
+        super().__init__(length, 2.0 / (length + 1), policy)
 
 
 class Rma(_Seeded):
-    def __init__(self, length: int):
-        super().__init__(length, 1.0 / length)
+    def __init__(self, length: int, policy: str = "skip_na_out"):
+        super().__init__(length, 1.0 / length, policy)
 
 
 class Rsi:
-    def __init__(self, length: int):
-        self.up, self.down = Rma(length), Rma(length)
+    def __init__(self, length: int, policy: str = "skip_na_out"):
+        self.up, self.down = Rma(length, policy), Rma(length, policy)
         self.prev = NAN
 
     def update(self, x) -> float:
@@ -97,19 +139,27 @@ class Rsi:
 
 
 class Stdev:
-    def __init__(self, length: int, biased: bool = True):
-        self.sma = Sma(length)
+    def __init__(self, length: int, biased: bool = True, policy: str = "skip"):
+        self.policy = _check(policy)
+        self.sma = Sma(length, policy)
         self.w = _Window(length)
+        self.vw = None if policy == "propagate" else _ValidWindow(length, policy)
         self.denom = length if biased else length - 1
 
     def update(self, x) -> float:
         x = _f(x)
         avg = self.sma.update(x)
-        self.w.push(x)
-        if not self.w.full or math.isnan(avg):
-            return NAN
+        if self.vw is not None:
+            if not self.vw.push(x):
+                return NAN
+            window = self.vw.w.h
+        else:
+            self.w.push(x)
+            if not self.w.full or math.isnan(avg):
+                return NAN
+            window = self.w.h
         ss = 0.0
-        for v in reversed(self.w.h):
+        for v in reversed(window):
             d = v - avg
             if abs(d) <= 1e-10:
                 d = 0.0
@@ -120,11 +170,16 @@ class Stdev:
 class _Extreme:
     pick = staticmethod(np.max)
 
-    def __init__(self, length: int):
+    def __init__(self, length: int, policy: str = "skip"):
+        self.policy = _check(policy)
         self.w = _Window(length)
+        self.vw = None if policy == "propagate" else _ValidWindow(length, policy)
 
     def update(self, x) -> float:
-        self.w.push(_f(x))
+        x = _f(x)
+        if self.vw is not None:
+            return float(self.pick(np.array(self.vw.w.h))) if self.vw.push(x) else NAN
+        self.w.push(x)
         if not self.w.full:
             return NAN
         arr = np.array(self.w.h)
@@ -144,7 +199,7 @@ class Atr:
     ``low``, ``close``); RMA state per call."""
 
     def __init__(self, length: int):
-        self.rma = Rma(length)
+        self.rma = Rma(length)  # rma's default policy, as pine.ta.atr
 
     def update(self, high, low, prev_high, prev_close) -> float:
         h, lo = _f(high), _f(low)

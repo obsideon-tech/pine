@@ -120,9 +120,28 @@ for _name, _f in REF.items():
         (_name, "length + 1", length_shift(_f, +1), W[_name], "na", False),
         (_name, "length - 1", length_shift(_f, -1), W[_name] - 1, "na", False),
         (_name, "one-bar look-ahead", lookahead(_f), W[_name] - 1, "na", False),
-        (_name, "na -> 0", nz_source(_f), NA_AT, "na", True),
+        # Under the observed defaults (PINE_PLAN.md §12) windowed built-ins skip na and still
+        # output a value on the gap bar, so substituting 0 shows up as a *value* error there;
+        # recursive ones output na on the gap bar, so it shows up in the na mask.
+        (
+            _name,
+            "na -> 0",
+            nz_source(_f),
+            NA_AT,
+            "value" if ta.DEFAULT_NA_POLICY.get(_name) == "skip" else "na",
+            True,
+        ),  # fmt: skip
         (_name, "first bar dropped", drop_first_bar(_f), W[_name], "na", False),
     ]
+
+
+# `highest` with na -> 0: a 0 cannot raise a maximum, so the mutant only diverges once the
+# skip window's extra older bar is the maximum, three bars after the gap on this data
+# (data-dependent detection; found when the defaults changed, see PINE_PLAN.md §12).
+CASES = [
+    (n, m, f, NA_AT + 3, "value", g) if (n, m) == ("highest", "na -> 0") else (n, m, f, b, d, g)
+    for n, m, f, b, d, g in CASES
+]
 
 
 @pytest.mark.parametrize(
@@ -302,13 +321,16 @@ def test_crossover_near_ties_are_excused_not_hidden():
 
 # ---------- na policy (PINE_PLAN §10 A2): the harness must separate the hypotheses ----------
 
+_WINDOWED = ("sma", "stdev", "highest", "lowest")
 POLICY_CASES = [
-    # (indicator, mutant policy, expected first divergence relative to the gap, type)
-    *[(n, "skip", 0, "na") for n in ("sma", "ema", "rma", "stdev", "highest", "lowest", "rsi")],
-    *[(n, "skip_na_out", 1, "na") for n in ("sma", "ema", "rma", "stdev", "highest", "lowest")],
-    # RSI: the change is na at the gap bar and the bar after, so skip_na_out first differs
-    # two bars after the gap.
-    ("rsi", "skip_na_out", 2, "na"),
+    # (indicator, mutant policy, expected first divergence relative to the gap, type).
+    # Reference = observed default (windowed: skip, value on the gap bar; recursive:
+    # skip_na_out, na on the gap bar with state carried).
+    *[(n, p, 0, "na") for n in _WINDOWED for p in ("propagate", "skip_na_out")],
+    *[(n, "propagate", 1, "na") for n in ("ema", "rma")],  # propagate re-seeds after the gap
+    *[(n, "skip", 0, "na") for n in ("ema", "rma", "rsi")],  # skip outputs on the gap bar
+    # RSI: the change is na on the gap bar and the bar after.
+    ("rsi", "propagate", 2, "na"),
 ]
 
 
@@ -318,7 +340,7 @@ POLICY_CASES = [
 def test_na_policy_mutant_detected(close, name, policy, offset, dtype):
     x = close.copy()
     x[NA_AT] = np.nan
-    ref = REF[name](x, L)  # propagate (current default)
+    ref = REF[name](x, L)  # observed default policy
     r = compare_series(REF[name](x, L, na_policy=policy), ref, kind=KIND[name])
     assert not r.passed
     assert (r.first_divergence, r.divergence_type) == (NA_AT + offset, dtype)
