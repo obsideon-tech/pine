@@ -45,6 +45,7 @@ def write_manifest(
     adjustment: str = "splits",
     session: str = "regular",
     force: bool = False,
+    mintick: float | None = None,
 ) -> Path:
     """Write ``<csv>.yaml`` describing a capture export; returns its path."""
     csv = Path(csv)
@@ -89,6 +90,7 @@ def write_manifest(
         "displayed_precision": max(exp.observed_decimals.get(c, 0) for c in cols),
         "indicator": {"name": " + ".join(scripts), "inputs": inputs},
         "notes": "Written by `python -m pine.capture manifest`; edit if the chart settings differ.",
+        **({"mintick": mintick} if mintick is not None else {}),
     }
     try:
         validate_manifest(dict(data), str(out))
@@ -99,7 +101,7 @@ def write_manifest(
     return out
 
 
-def run_checks(exp, inputs_rounded: bool = False) -> dict:
+def run_checks(exp, inputs_rounded: bool = False, mintick: float | None = None) -> dict:
     """Run every check the export supports. Returns a dict with per-check results."""
     result: dict = {
         "reference": None, "semantics": None, "strategy": None, "skipped": [], "errors": [],
@@ -123,7 +125,7 @@ def run_checks(exp, inputs_rounded: bool = False) -> dict:
         result["skipped"].append("semantics (tools/capture_semantics.pine not in the export)")
     if _present(exp, strategy_capture.COLUMNS):
         try:
-            result["strategy"] = strategy_capture.decide(exp)
+            result["strategy"] = strategy_capture.decide(exp, mintick=mintick)
         except ValueError as exc:
             result["errors"].append(f"strategy: {exc}")
     else:
@@ -222,6 +224,9 @@ def main(argv: list[str] | None = None) -> int:
         "splits_dividends if the chart's 'Adjust data for dividends' (ADJ) is on",
     )
     m.add_argument("--session", default="regular", choices=("regular", "extended"))
+    m.add_argument(
+        "--mintick", type=float, help="symbol tick size (syminfo.mintick), for the strategy check"
+    )
     m.add_argument("--force", action="store_true", help="overwrite an existing manifest")
 
     c = sub.add_parser("check", help="run every check the export supports")
@@ -230,6 +235,12 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--timeframe", help="only if there is no manifest")
     c.add_argument("--tz", help="only if there is no manifest")
     c.add_argument("--inputs-rounded", action="store_true", help="see §5.1 of PINE_PLAN.md")
+    c.add_argument(
+        "--mintick",
+        type=float,
+        help="symbol tick size for the strategy check (default: manifest, then the export's "
+        "strat_mintick column)",
+    )
     c.add_argument("--format", choices=("md", "json"), default="md")
     c.add_argument("--out", help="write the report to this file as well as stdout")
     args = ap.parse_args(argv)
@@ -244,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
                 adjustment=args.adjustment,
                 session=args.session,
                 force=args.force,
+                mintick=args.mintick,
             )
             print(f"wrote {path}\nnext: uv run python -m pine.capture check {args.csv}")
             return 0
@@ -253,7 +265,10 @@ def main(argv: list[str] | None = None) -> int:
         if manifest is None and not args.timeframe:
             manifest = csv.with_suffix(".yaml")
         exp, man = load_export(csv, manifest, args.timeframe, args.tz)
-        result = run_checks(exp, inputs_rounded=args.inputs_rounded)
+        mintick = args.mintick
+        if mintick is None and man is not None:
+            mintick = man.mintick
+        result = run_checks(exp, inputs_rounded=args.inputs_rounded, mintick=mintick)
         if not result["errors"] and all(
             result[k] is None for k in ("reference", "semantics", "strategy")
         ):

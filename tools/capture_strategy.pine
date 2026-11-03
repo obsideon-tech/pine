@@ -40,3 +40,5 @@ plot(strategy.netprofit, "strat_netprofit")
 plot(strategy.openprofit, "strat_openprofit")
 plot(strategy.equity, "strat_equity")
 plot(strategy.closedtrades, "strat_closedtrades")
+// Optional: the tick size TradingView rounds prices to in the broker emulator.
+plot(syminfo.mintick, "strat_mintick")

@@ -5,6 +5,7 @@ TradingView export of tools/capture_strategy.pine, is checked by pine.capture.
 """
 
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +18,15 @@ from pine.lint._calls import find_calls
 from pine.lint._lexer import tokenize
 from pine.runtime import run
 from pine.strategy import StrategyConfig
-from pine.strategy_capture import COLUMNS, CONSTANTS, GROUPS, decide, strategy_capture
+from pine.strategy_capture import (
+    _NEEDS_MINTICK,
+    COLUMNS,
+    CONSTANTS,
+    GROUPS,
+    OPTIONAL_COLUMNS,
+    decide,
+    strategy_capture,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "tools" / "capture_strategy.pine"
@@ -180,7 +189,7 @@ def test_pine_constants_and_titles_match():
             found[toks[i + 2].text] = float(toks[i + 4].text)
     assert found == {k: float(v) for k, v in CONSTANTS.items()}
     titles = [c.args[1].text.strip("\"'") for c in find_calls(toks) if c.name == "plot"]
-    assert tuple(titles) == COLUMNS
+    assert tuple(titles) == COLUMNS + OPTIONAL_COLUMNS
     assert lint_file(SCRIPT).findings == ()
 
 
@@ -201,9 +210,59 @@ def _export(bars, cfg, tmp_path, k=0):
 @pytest.mark.parametrize("group", [g for g in GROUPS if len(GROUPS[g]) > 1])
 def test_each_rule_is_decided_and_alternatives_detected(group, tmp_path):
     bars = _long_bars()
+    tick = 0.05 if group in _NEEDS_MINTICK else None
     for hyp, cfg in GROUPS[group].items():
-        d = next(d for d in decide(_export(bars, cfg, tmp_path)) if d.group == group)
+        exp = _export(bars, replace(cfg, mintick=tick), tmp_path)
+        d = next(d for d in decide(exp, mintick=tick) if d.group == group)
         assert d.matching == (hyp,), (group, hyp, d.matching)
+
+
+def test_rounding_groups_skipped_without_mintick(tmp_path):
+    decisions = decide(_export(_long_bars(n=300), StrategyConfig(), tmp_path))
+    assert not {d.group for d in decisions} & set(_NEEDS_MINTICK)
+    from pine.strategy_capture import summary
+
+    assert "Tick size unknown" in summary(decisions)
+
+
+# ---------- regression: real TradingView fills (BINANCE:DOGEUSDT 1D, 2026-11-03) ----------
+
+
+def test_doge_fills_round_to_the_tick():
+    """Rows from the first strategy export: TradingView filled at tick-rounded prices."""
+    cfg = StrategyConfig(mintick=0.00001)
+    # Row 0 entry -> fill at row 1 open 0.0038741 -> TradingView avg 0.00387.
+    # Close at row 8 -> fill at row 9 open 0.0032474 -> 0.00325; net -0.00062 exactly.
+    rows = [(0.00449, 0.0046, 0.00355, 0.0038701), (0.0038741, 0.0039426, 0.0033652, 0.0035)]
+    rows += [(0.0035, 0.0036, 0.0034, 0.0035)] * 7
+    rows += [(0.0032474, 0.0032788, 0.0029008, 0.0029175)]
+    r, b = run_orders(
+        rows, {0: lambda s, c: s.entry("L", "long"), 8: lambda s, c: s.close("L")}, cfg
+    )
+    assert b.trades[0].entry_price == 0.00387 and b.trades[0].exit_price == 0.00325
+    assert r["net"][-1] == pytest.approx(-0.00062, abs=1e-15)
+
+
+@pytest.mark.parametrize(
+    "prev_close, bar, profit",
+    [
+        # Row 30/31: limit 0.0029222 * 1.01 = 0.0029514 -> 0.00296 (sell limit rounds up);
+        # entry at the rounded open 0.00292; TradingView net +0.00004.
+        (0.0029222, (0.0029196, 0.0031998, 0.0029196, 0.0030428), 0.00004),
+        # Row 470/471: limit 0.0026092 -> 0.00261, reached only by the rounded high
+        # (0.0026055 -> 0.00261); entry 0.00258; TradingView exits that bar, +0.00003.
+        (0.0025834, (0.0025842, 0.0026055, 0.00258, 0.0025874), 0.00003),
+    ],
+)
+def test_doge_bracket_limit_fills(prev_close, bar, profit):
+    cfg = StrategyConfig(mintick=0.00001)
+    rows = [(prev_close, prev_close, prev_close, prev_close), bar]
+    _, b = run_orders(rows, {0: bracket(prev_close * 0.99, prev_close * 1.01)}, cfg)
+    assert len(b.trades) == 1 and b.trades[0].exit_bar == 1
+    assert b.trades[0].profit == pytest.approx(profit, abs=1e-15)
+    # Without rounding, neither matches TradingView.
+    _, raw = run_orders(rows, {0: bracket(prev_close * 0.99, prev_close * 1.01)})
+    assert not (len(raw.trades) == 1 and raw.trades[0].profit == pytest.approx(profit, abs=1e-12))
 
 
 def test_expected_export_passes_every_group(tmp_path):
