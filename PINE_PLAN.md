@@ -311,6 +311,8 @@ export-derived value in the test docstring:
   `freq` is `alert.freq_once_per_bar` (fires intrabar); a negative literal history index
   does not compile; `barstate.isnew`/`islast` differ between history and realtime as
   described;
+- `varip` on the live (last, unconfirmed) bar keeps intrabar ticks, so it differs from `var`
+  there; observed on DOGE/BTC exports (§12). Checks exclude that row.
 - execution model and scalar rules (`pine.runtime`, §11 E1). **Confirmed by export
   (2026-11-03, §12):** `math.round` ties round **away from zero** (`round(-2.5) = -3`; the
   earlier `floor(x + 0.5)` assumption was wrong and is fixed); `%` truncates (`-7 % 3 = -1`);
@@ -580,7 +582,7 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
 - [x] **[med] Mutation suite as P2's exit criterion** (§5.9) — done 2026-11-03 except the
       `stdev` case, which waits for `ta.stdev`.
 - [x] **[med] Fixture manifest schema and validator in P0** (§7.1) — done 2026-11-03.
-- [ ] **[high] A1 — Reference values for the core built-ins via a capture script and a
+- [x] **[high] A1 — Reference values for the core built-ins via a capture script and a
       coverage matrix** (§10 A1; supersedes the earlier "commit reference values" item) —
       _2026-11-03: two exports passed (NFLX 1D mid-history, NFLX 1W from bar 0; §12). Core
       eleven verified incl. seeding. Remaining rows: price < 1, price > 10 000, intraday._
@@ -595,6 +597,8 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         `tools/reference_capture.example.yaml`. Consistency tests tie the Pine constants and
         plot titles to `pine.reference`; the script is lint-clean. Synthetic end-to-end tests
         prove the plumbing only. **Remaining: the exports themselves (owner action).**
+      _2026-11-03: **matrix complete** — DOGE 1D (price < 1, from bar 0), BTC 1D (price
+      > 10 000, mid-history), AAPL 60 (intraday session, mid-history) added; see §12._
 - [x] **[high] A2 — `na_policy` switch and the opposite-policy mutant** (§10 A2) — **decided
       2026-11-03** by the NFLX export (§12): windowed built-ins `skip`, recursive ones
       `skip_na_out`; these are now the defaults (`pine.ta.DEFAULT_NA_POLICY`) in `pine.ta` and
@@ -1101,6 +1105,32 @@ opening gaps and daylight-saving changes (both inherent in NFLX daily), an expor
 at bar 0 and one starting mid-history. **Remaining matrix rows (§10 A1):** price < 1,
 price > 10 000, an intraday timeframe (sessions/time zones). Built-ins outside the core
 eleven, `request.security` and sessions remain unverified.
+
+### 2026-11-03 — BINANCE:DOGEUSDT 1D, BITSTAMP:BTCUSD 1D, BATS:AAPL 60 (matrix rows)
+
+Indicator and semantics captures only (the strategy capture was not yet in the checker the
+owner ran, so §13 remains unverified).
+
+| Export | Start | Indicators | `na` policy | Semantics |
+|---|---|---|---|---|
+| DOGEUSDT 1D (price < 1) | bar 0, 2 679 rows | all 16 columns **match**, aligned, incl. seeding (max error ≤ 4.3e-14) | same decision | all match except `varip_acc` on the **last row only** (below) |
+| BTCUSD 1D (price > 10 000) | bar 2662 | all **match** (max abs 1.6e-9 on stdev = 3.5e-12 relative; `rtol` regime) | same decision | all match except the same last-row `varip_acc`; `barssince`/`valuewhen` not decidable |
+| AAPL 60 (intraday, sessions) | bar 17845 | all **match** | same decision | all match; `regime` not decidable (no whipsaw after sync) |
+
+**`varip` on the last bar.** On the two 24/7 crypto charts the last exported bar was live;
+there `varip_acc` exceeded `var_acc` while every earlier row matched exactly. That is
+documented `varip` behaviour (it keeps intrabar ticks on the realtime bar), not a runtime
+error: the AAPL export, taken with the market closed, shows no difference. The checker now
+excludes the last row for `varip_acc` and reports when the last bar was live
+(`pine.semantics`, test `test_live_last_bar_varip_is_excluded_and_reported`).
+
+**Coverage.** With NFLX 1D/1W these five exports cover: price scales ~0.1, ~100–1 000 and
+> 10 000; daily, weekly and hourly bars; equities and 24/7 crypto; opening gaps; DST; exports
+from bar 0 and mid-history. The `na`-handling decision was identical in all five. The core
+eleven built-ins, `na` handling, execution model and scalar rules are verified across the
+§10 A1 matrix. Still unverified: the strategy emulator (§13), built-ins outside the core,
+sessions as a *feature* (AAPL hourly only shows that session bars don't break anything), and
+`request.security`.
 
 ## 13. Strategy parity (`strategy.*`)
 

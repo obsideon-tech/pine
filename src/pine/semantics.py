@@ -24,7 +24,7 @@ import json
 import math
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -480,6 +480,7 @@ class GroupDecision:
     reports: dict[str, ParityReport]
     excluded: str = "0"
     """Rows excluded because they depend on history before the export ("0" if none)."""
+    note: str = ""
 
     @property
     def undecided(self) -> bool:
@@ -575,10 +576,32 @@ def decide(export: TradingViewExport) -> list[GroupDecision]:
                 )
                 for c, v in cols.items()
             }
-            reports[name] = check_export(export, specs)
+            target = export
+            if "varip_acc" in cols:
+                # The last exported bar can be the live, unconfirmed bar (24/7 markets, or an
+                # export taken during a session). There `varip` keeps intrabar ticks while
+                # `var` does not, so historical-bar semantics cannot be checked on that row.
+                live = np.array(export.columns["varip_acc"], dtype=float)
+                live[-1] = np.nan
+                target = replace(export, columns={**export.columns, "varip_acc": live})
+                v = np.array(cols["varip_acc"], dtype=float)
+                v[-1] = np.nan
+                specs["varip_acc"] = replace(specs["varip_acc"], fn=lambda bb, v=v: v)
+            reports[name] = check_export(target, specs)
         matching = tuple(h for h, r in reports.items() if r.passed)
+        note = ""
+        if group == "var":
+            va, vi = export.columns["var_acc"][-1], export.columns["varip_acc"][-1]
+            note = (
+                f"last bar was live: varip kept intrabar updates (varip {vi:.10g} vs var "
+                f"{va:.10g}); that row is excluded"
+                if not np.isclose(va, vi, rtol=1e-12, atol=0)
+                else "last row excluded for varip (could be a live bar)"
+            )
         out.append(
-            GroupDecision(group, EXPECTED[group], matching, reports, excluded_by[EXPECTED[group]])
+            GroupDecision(
+                group, EXPECTED[group], matching, reports, excluded_by[EXPECTED[group]], note
+            )
         )
     return out
 
@@ -617,9 +640,11 @@ def _summary(decisions: list[GroupDecision]) -> str:
     verdict = "all groups match the runtime" if not bad else f"mismatched groups: {bad}"
     if undecided:
         verdict += f"; not decidable in this export: {undecided}"
+    notes = [f"- {d.group}: {d.note}" for d in decisions if d.note]
     lines += [
         "",
         f"Verdict: {verdict}",
+        *([""] + notes if notes else []),
         "",
         "Rows excluded: history-dependent probes are compared only after the rows that depend "
         "on bars before the export (PINE_PLAN.md §5.4, pine.truncation).",

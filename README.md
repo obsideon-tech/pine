@@ -113,11 +113,12 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 
 ## Known gaps
 
-- **Verified against TradingView so far** (two NFLX exports, daily and weekly; see
-  [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results)): the eleven core
-  built-ins including seeding, `na` handling, the runtime's execution model and scalar rules,
-  and the three reference ports. Not yet: prices below 1 or above 10 000, intraday charts,
-  and every built-in outside the core eleven.
+- **Verified against TradingView so far** (five exports: NFLX 1D/1W, DOGE 1D, BTC 1D,
+  AAPL 60; see [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results)): the
+  eleven core built-ins including seeding, across price scales from ~0.1 to > 10 000, daily,
+  weekly and hourly bars; `na` handling; the runtime's execution model and scalar rules; the
+  three reference ports. Not yet: the strategy emulator, built-ins outside the core eleven,
+  sessions as a feature, `request.security`.
 - **`na` inside windows** follows the observed behaviour by default: `sma`, `stdev`,
   `highest`, `lowest` skip `na`; `ema`, `rma`, `rsi` carry state across `na` and output `na`
   on the `na` bar (`pine.ta.DEFAULT_NA_POLICY`; override with `na_policy=`). Observed on one

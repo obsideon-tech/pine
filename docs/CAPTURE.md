@@ -129,6 +129,8 @@ report. Things to know:
 | `none of the capture columns` / `contains neither capture script's columns` | The scripts weren't on the chart when you exported, or TradingView renamed the columns. Check the CSV header and send it to me if the names differ. |
 | `export lacks … columns […]` | Only some plots were exported. Check that both scripts are visible and unchanged. |
 | `src_na` fails | The gap pattern doesn't line up with the exported `bar_index`. Send the report: either rows are missing in the middle of the export or the script was edited. (A late start alone is handled.) |
+| `varip_acc` differs only on the last row | The last bar was live (24/7 markets, or a session still open); `varip` keeps intrabar ticks there. Handled: the checker excludes that row and says so. |
+| No "Strategy" section and no "Skipped" line about it | Your checkout predates the strategy checker: `git pull` (after the PR adding it is merged). The strategy script also has to be on the chart when you export. |
 | `bar_index column is not consecutive` | Rows are missing or reordered in the CSV. Re-export without editing the file. |
 | `timeframe '1h' is not a Pine timeframe string` | Use Pine spelling: `60` rather than `1h`, `1D` rather than `D1`. |
 
