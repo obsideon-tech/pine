@@ -154,6 +154,13 @@ class ColumnReport:
     mde_seed: float | None = None
     """Smallest seed error a filter with the given ``alpha`` would show (§5.7); ``None`` when
     no ``alpha`` was given."""
+    min_compared: int = 0
+    """A column comparing fewer bars than this is *inconclusive* and does not pass (guards
+    against vacuous passes when convergence exclusions consume a short export)."""
+
+    @property
+    def inconclusive(self) -> bool:
+        return self.n_compared < self.min_compared
 
     @property
     def first_divergence(self) -> int | None:
@@ -169,7 +176,7 @@ class ColumnReport:
 
     @property
     def passed(self) -> bool:
-        return self.na_mismatches == 0 and self.value_failures == 0
+        return self.na_mismatches == 0 and self.value_failures == 0 and not self.inconclusive
 
 
 def compare_series(
@@ -183,6 +190,7 @@ def compare_series(
     exclude: int = 0,
     ts: ArrayLike | None = None,
     alpha: float | None = None,
+    min_compared: int = 0,
 ) -> ColumnReport:
     """Compare one numeric output column. ``pine`` is the reference.
 
@@ -221,6 +229,11 @@ def compare_series(
     n_cmp = int(both.sum())
     max_bar = int(np.argmax(np.where(both, err, -1.0))) if n_cmp else None
     notes: list[str] = []
+    if n_cmp < min_compared:
+        notes.append(
+            f"{name}: inconclusive, only {n_cmp} bars compared (need {min_compared}); the "
+            "export is too short after exclusions"
+        )
     if mode == "convergence":
         notes.append(
             f"convergence mode: first {exclude} bars excluded; a pass does not certify "
@@ -246,6 +259,7 @@ def compare_series(
         notes=tuple(notes),
         mde_offset=mde_offset,
         mde_seed=mde_seed,
+        min_compared=min_compared,
     )
     fd = report.first_divergence
     if ts_arr is not None and fd is not None:
@@ -375,6 +389,8 @@ class PortSpec:
     """Smoothing factor of a seeded recursive filter; enables ``mde_seed`` (§5.7)."""
     excuse: Callable[[Bars], ArrayLike] | None = None
     """``kind="discrete"`` only: bars where a mismatch is excused (e.g. `crossover_excuse`)."""
+    min_compared: int = 0
+    """See `ColumnReport.min_compared`."""
 
 
 @dataclass(frozen=True)
@@ -407,7 +423,7 @@ class ParityReport:
                 f"| {c.max_rel_err:.3g} | {c.rmse:.3g} | {c.within_tol_share:.2%} "
                 f"| {format_atol(c.tolerance.atol)} / {c.tolerance.rtol:.3g} "
                 f"| {_fmt_mde(c.mde_offset)} / {_fmt_mde(c.mde_seed)} "
-                f"| {'pass' if c.passed else 'FAIL'} |"
+                f"| {'inconclusive' if c.inconclusive else ('pass' if c.passed else 'FAIL')} |"
             )
         for d in self.discrete:
             lines.append(
@@ -454,6 +470,7 @@ class ParityReport:
                     "rtol": c.tolerance.rtol,
                     "mde_offset": num(c.mde_offset),
                     "mde_seed": num(c.mde_seed),
+                    "inconclusive": c.inconclusive,
                     "notes": list(c.notes),
                 }
             )
@@ -525,6 +542,7 @@ def check_export(
             exclude=spec.exclude,
             ts=export.bars.ts,
             alpha=spec.alpha,
+            min_compared=spec.min_compared,
         )
         if note:
             rep = replace(rep, notes=(*rep.notes, note))

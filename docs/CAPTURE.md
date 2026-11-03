@@ -88,8 +88,8 @@ It prints a report and saves it to the `--out` file:
 
 - **Overall: PASS** means everything matched what `pine` expects.
 - **Gap-free columns**: bar-by-bar parity for each built-in (`sma`, `ema`, `rsi`, `atr`, …).
-  The `src_na` row is the alignment check: if it fails, the export did not start at the chart's
-  first loaded bar, so scroll further back (step 3) and export again.
+  The `src_na` row is the alignment check. An export that starts after the chart's first bar
+  is handled (see below); `src_na` fails only if rows are missing or the script was changed.
 - **na policy**: which of the three hypotheses about `na` inside windows TradingView follows.
 - **Pine semantics**: one row per behaviour (conditional `ta.*` calls, rounding, `%`, and so
   on). A row marked **runtime must change** is a real finding, not a failure of the process.
@@ -102,6 +102,22 @@ Send me the report file (`aapl_1d_report.md`), not the CSV. It contains only com
 results: error sizes, first divergent bars and which hypothesis matched. If something went
 wrong earlier, send the error message instead.
 
+## If the export starts part-way through history
+
+TradingView may export only the later part of the chart's history (a daily NFLX export
+started at bar 3116 of 6151). That's fine: the checkers read the true bar number from the
+`bar_index` column, skip the rows that depend on unseen earlier bars, and say so in the
+report. Things to know:
+
+- **EMA / RMA / ATR**: checked by an exact decay test. Their formula is verified on every bar;
+  only the starting value is not.
+- **inconclusive**: a column with fewer than 100 bars left after those exclusions. Export a
+  longer history if you see it.
+- **not decidable in this export**: the behaviour only shows before an event that happened
+  before your export started. That's not a failure.
+- **synchronised**: stateful ports (Supertrend, the trailing stop, the regime machine) are
+  compared from the first row where their state matches. The report gives that row.
+
 ## Troubleshooting
 
 | Message | Cause and fix |
@@ -110,7 +126,8 @@ wrong earlier, send the error message instead.
 | `manifest not found: …` | Run step 5 first, or pass `--timeframe 1D` to `check` to skip the manifest. |
 | `none of the capture columns` / `contains neither capture script's columns` | The scripts weren't on the chart when you exported, or TradingView renamed the columns. Check the CSV header and send it to me if the names differ. |
 | `export lacks … columns […]` | Only some plots were exported. Check that both scripts are visible and unchanged. |
-| `src_na` or `bar_index` fails | The export doesn't start at the first loaded bar; see step 3. |
+| `src_na` fails | The gap pattern doesn't line up with the exported `bar_index`. Send the report: either rows are missing in the middle of the export or the script was edited. (A late start alone is handled.) |
+| `bar_index column is not consecutive` | Rows are missing or reordered in the CSV. Re-export without editing the file. |
 | `timeframe '1h' is not a Pine timeframe string` | Use Pine spelling: `60` rather than `1h`, `1D` rather than `D1`. |
 
 ## More rows

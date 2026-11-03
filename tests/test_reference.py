@@ -78,6 +78,7 @@ def synthetic_export(policy: str, tmp_path: Path, drop_first: int = 0) -> Path:
     for name, (fn, n, _) in NA_PORTS.items():
         cols[name] = fn(src_na, n, na_policy=policy)
     assert tuple(cols) == PLOT_TITLES
+    cols["bar_index"] = np.arange(len(b), dtype=float)  # as in a combined export
     exp = TradingViewExport(
         b, cols, ("time", "open", "high", "low", "close", "Volume", *cols), "unix"
     )
@@ -104,13 +105,22 @@ def test_pipeline_passes_and_identifies_the_policy(policy, tmp_path):
     assert {d.column: d.matching for d in decisions} == {c: (policy,) for c in NA_COLUMNS}
 
 
-def test_truncated_export_fails_alignment_check(tmp_path):
+def test_truncated_export_is_aligned_through_bar_index(tmp_path):
+    # Dropping rows keeps the true bar_index in its column: the gap pattern still lines up.
     exp = load_tradingview_csv(
         synthetic_export("propagate", tmp_path, drop_first=10), timeframe="60"
     )
-    rep = check_capture(exp)
-    src = next(c for c in rep.columns if c.name == "src_na")
-    assert not src.passed  # gap pattern no longer lines up with bar_index
+    src = next(c for c in check_capture(exp).columns if c.name == "src_na")
+    assert src.passed and any("bar_index 10" in n for n in src.notes)
+
+
+def test_wrong_bar_index_fails_alignment_check(tmp_path):
+    exp = load_tradingview_csv(synthetic_export("propagate", tmp_path), timeframe="60")
+    cols = dict(exp.columns)
+    cols["bar_index"] = cols["bar_index"] + 1  # claims one bar more history than there is
+    bad = TradingViewExport(exp.bars, cols, exp.header, exp.time_format)
+    src = next(c for c in check_capture(bad).columns if c.name == "src_na")
+    assert not src.passed
 
 
 def test_unknown_behaviour_matches_no_policy(tmp_path):

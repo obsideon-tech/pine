@@ -103,9 +103,10 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 
 ## Known gaps
 
-- **No external verification yet.** Every built-in is checked against closed-form cases and
-  property tests derived from the same reading of the Pine manual; none against TradingView
-  output. Treat results as unverified.
+- **External verification has started, not finished.** One TradingView export (NFLX daily,
+  2026-11-03) confirmed `sma`, `stdev`, `highest`, `lowest`, `tr`, `crossover`/`crossunder` and
+  four scalar rules, and refuted the assumed `math.round` tie rule (now fixed). Everything else
+  awaits a re-run with the offset-aware checker; see [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
 - **`na` inside windows** may be handled differently by TradingView. Three hypotheses are
   implemented (`na_policy`); the default `propagate` is unconfirmed until a capture export
   decides. Gap-free data is unaffected.

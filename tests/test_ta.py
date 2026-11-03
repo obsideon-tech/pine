@@ -170,7 +170,14 @@ def test_ma_bounded_by_window_range(x, n):
 def test_rsi_positive_affine_invariance_and_bounds(x, n, a, b):
     r = ta.rsi(x, n)
     assert ((r[n:] >= 0) & (r[n:] <= 100)).all()
-    np.testing.assert_allclose(ta.rsi(a * x + b, n), r, atol=1e-7)
+    y = a * x + b
+    # Invariance holds in exact arithmetic; in float64 the transform can round a tiny move to
+    # zero (found by a random run: near-constant x, b = 1), flipping RSI's 0/100 branches.
+    # Require that every bar-to-bar move keeps its sign and is not destroyed by rounding.
+    dx, dy = np.diff(x), np.diff(y)
+    assume(np.array_equal(np.sign(dx), np.sign(dy)))
+    assume(np.all((dx == 0) | (np.abs(dy) > 1e-9 * np.abs(y[1:]))))
+    np.testing.assert_allclose(ta.rsi(y, n), r, atol=1e-7)
 
 
 @settings(max_examples=examples(60), deadline=None)

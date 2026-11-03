@@ -244,7 +244,8 @@ def test_uncalled_builtin_keeps_its_state():
 
 
 def test_scalar_helpers():
-    assert (ps.round_(2.5), ps.round_(-2.5), ps.round_(3.5)) == (3.0, -2.0, 4.0)
+    assert (ps.round_(2.5), ps.round_(-2.5), ps.round_(3.5)) == (3.0, -3.0, 4.0)
+    assert ps.round_(-1.235, 2) == pytest.approx(-1.24) and ps.round_(0.4) == 0.0
     assert ps.round_(1.235, 2) == pytest.approx(1.24)
     assert ps.mod(-7, 3) == -1.0 and math.isnan(ps.mod(1, 0))
     assert ps.div(7, 2) == 3.5 and math.isnan(ps.div(1, 0))

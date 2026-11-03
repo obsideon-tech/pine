@@ -24,16 +24,24 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
 from pine import ta
 from pine._cli import InputError, load_export
 from pine.bars import Bars
+from pine.convergence import rsi_convergence_bars
 from pine.io import TradingViewExport
-from pine.parity import ParityReport, PortSpec, check_export, crossover_excuse, tolerance_for
+from pine.parity import (
+    ParityReport,
+    PortSpec,
+    check_export,
+    crossover_excuse,
+    tolerance_for,
+)
 from pine.sensitivity import LIPSCHITZ, input_rounding, rsi_input_error, stdev_lipschitz
+from pine.truncation import bar_offset, decay_adjusted, sync_point
 
 __all__ = [
     "CONSTANTS",
@@ -56,13 +64,26 @@ def _col(export: TradingViewExport, name: str) -> np.ndarray:
     return np.asarray(export.columns[name])
 
 
-def _src_na_expected(b: Bars) -> np.ndarray:
-    i = np.arange(len(b))
+def _src_na_expected(b: Bars, k: int = 0) -> np.ndarray:
+    """``src_na`` given the true ``bar_index`` of the first row (``k``)."""
+    i = k + np.arange(len(b))
     gap = i % CONSTANTS["GAP_PERIOD"] >= CONSTANTS["GAP_PERIOD"] - CONSTANTS["GAP_WIDTH"]
     return np.where(gap, np.nan, b.close)
 
 
-def _gapfree_specs(export: TradingViewExport) -> dict[str, PortSpec]:
+def infer_gap_phase(export: TradingViewExport) -> int:
+    """``bar_index mod GAP_PERIOD`` of the first row, inferred from the exported ``src_na``
+    gap pattern (used when the export has no ``bar_index`` column)."""
+    na = np.isnan(_col(export, "src_na"))
+    period, width = CONSTANTS["GAP_PERIOD"], CONSTANTS["GAP_WIDTH"]
+    for k in range(period):
+        i = k + np.arange(na.size)
+        if np.array_equal(na, i % period >= period - width):
+            return k
+    raise ValueError("src_na gap pattern does not match any phase; is this the capture script?")
+
+
+def _gapfree_specs(export: TradingViewExport, k: int = 0) -> dict[str, PortSpec]:
     """Port for each gap-free column. Crossover columns use the exported EMAs as inputs, so
     they test crossover logic alone, and are compared as discrete columns with the two-bar
     near-tie excuse (§5.5). ``alpha`` is set on seeded recursive filters for ``mde_seed``."""
@@ -114,7 +135,7 @@ def _gapfree_specs(export: TradingViewExport) -> dict[str, PortSpec]:
         # Alignment check (§5.4): the gap pattern depends on bar_index, so this column only
         # matches if the export starts on the chart's first loaded bar. It is the exported
         # close itself on both sides, so rounding cancels.
-        "src_na": PortSpec(_src_na_expected, input_error=0.0),
+        "src_na": PortSpec(lambda b: _src_na_expected(b, k), input_error=0.0),
     }
 
 
@@ -136,11 +157,98 @@ NA_COLUMNS = tuple(NA_PORTS)
 PLOT_TITLES = (*GAPFREE_COLUMNS, *NA_COLUMNS)
 
 
+def history_offset(export: TradingViewExport) -> tuple[int, bool]:
+    """``(k, exact)``: the first row's ``bar_index`` and whether it is known exactly (from a
+    ``bar_index`` column) or only modulo ``GAP_PERIOD`` (from the ``src_na`` gap pattern)."""
+    k = bar_offset(export.columns)
+    if k is not None:
+        return k, True
+    return infer_gap_phase(export), False
+
+
+# In a truncated export, a column must still compare at least this many bars to pass.
+MIN_COMPARED = 100
+
+# Python warm-up rows for windowed columns (exact once the window is full).
+_WARMUP = {
+    "sma": LEN - 1,
+    "stdev": LEN - 1,
+    "stdev_sample": LEN - 1,
+    "highest": HL_LEN - 1,
+    "lowest": HL_LEN - 1,
+    "tr": 1,
+    "tr_handle_na": 1,
+}
+# Seeded recursive filters: (alpha, Python seed bar).
+_DECAY = {
+    "ema": (2 / (LEN + 1), LEN - 1),
+    "rma": (1 / LEN, LEN - 1),
+    "atr": (1 / LEN, LEN - 1),
+    "ema_fast": (2 / (CONSTANTS["FAST"] + 1), CONSTANTS["FAST"] - 1),
+    "ema_slow": (2 / (CONSTANTS["SLOW"] + 1), CONSTANTS["SLOW"] - 1),
+}
+
+
+def _truncated_specs(export: TradingViewExport, k: int) -> dict[str, PortSpec]:
+    """Specs for an export that starts after the chart's first bar (`pine.truncation`)."""
+    base = _gapfree_specs(export, k)
+    out = {}
+    for name, spec in base.items():
+        if name in _WARMUP:
+            out[name] = replace(
+                spec, mode="convergence", exclude=_WARMUP[name], min_compared=MIN_COMPARED
+            )
+        elif name in _DECAY:
+            alpha, w = _DECAY[name]
+            pine = _col(export, name)
+            out[name] = replace(
+                spec,
+                fn=lambda b, f=spec.fn, a=alpha, w=w, pine=pine: decay_adjusted(f(b), pine, a, w),
+                mode="convergence",
+                exclude=w,
+                alpha=None,
+                min_compared=MIN_COMPARED,
+            )
+        elif name == "rsi":
+            tol = tolerance_for("bounded", export.observed_decimals.get("rsi")).atol
+            close = np.asarray(export.bars.close)
+            m = 2 * float(np.nanmax(np.abs(np.diff(close))))
+            n = rsi_convergence_bars(close, LEN, float(tol), max_change=m)
+            out[name] = replace(
+                spec, mode="convergence", exclude=min(n, len(close)), min_compared=MIN_COMPARED
+            )
+        elif spec.kind == "discrete":
+            ex = spec.excuse
+
+            def first_row_excuse(b, ex=ex):
+                e = np.zeros(len(b), bool) if ex is None else np.asarray(ex(b), bool).copy()
+                e[0] = True  # crossover at row 0 needs the unseen previous bar
+                return e
+
+            out[name] = replace(spec, excuse=first_row_excuse)
+        else:
+            out[name] = spec
+    return out
+
+
 def check_capture(export: TradingViewExport, input_rounding: float | None = None) -> ParityReport:
     """Aligned-mode parity on the gap-free columns (and the ``src_na`` alignment check).
 
+    If the export starts after the chart's first bar (``bar_index`` > 0, or unknown), the
+    history-robust comparisons of `pine.truncation` are used instead and every column says so.
     ``input_rounding``: see `pine.parity.check_export`; `ohlc_rounding` estimates it."""
-    return check_export(export, _gapfree_specs(export), input_rounding=input_rounding)
+    k, exact = history_offset(export)
+    if exact and k == 0:
+        return check_export(export, _gapfree_specs(export, 0), input_rounding=input_rounding)
+    rep = check_export(export, _truncated_specs(export, k), input_rounding=input_rounding)
+    where = f"bar_index {k}" if exact else f"bar_index ≡ {k} (mod {CONSTANTS['GAP_PERIOD']})"
+    note = (
+        f"export starts at {where}, not the chart's first bar: warm-up rows excluded, "
+        "EMA/RMA/ATR checked by exact residual decay, RSI by convergence bound; seeding not "
+        "certified (pine.truncation)"
+    )
+    cols = tuple(replace(c, notes=(*c.notes, note)) for c in rep.columns)
+    return replace(rep, columns=cols)
 
 
 def ohlc_rounding(export: TradingViewExport) -> float:
@@ -168,10 +276,27 @@ def decide_na_policy(
 
     ``input_rounding`` as in `check_capture` (``src_na`` is the exported close)."""
     src = _col(export, "src_na")
+    k, exact = history_offset(export)
+    truncated = not (exact and k == 0)
     out = []
     for col, (fn, n, kind) in NA_PORTS.items():
         reports = {}
         for policy in ta.NA_POLICIES:
+            exclude = 0
+            if truncated:
+                py = fn(src, n, na_policy=policy)
+                valid = np.flatnonzero(~np.isnan(py))
+                w = int(valid[0]) if valid.size else len(py)
+                if col in ("ema_na", "rma_na", "rsi_na"):
+                    # Recursive state: under `propagate` it re-seeds after every gap, under the
+                    # skip policies it is carried. Compare from the observed sync row; a wrong
+                    # hypothesis diverges again at each gap and cannot stay synchronised past
+                    # the first half of the export.
+                    pine = _col(export, col)
+                    tol = tolerance_for(kind, export.observed_decimals.get(col))
+                    r = sync_point(py, pine, tol.bound(np.nan_to_num(pine)), start=w)
+                    w = r if r <= len(py) // 2 else w
+                exclude = min(w, len(py))
             if col == "rsi_na":
                 err = lambda b, d, n=n, p=policy: rsi_input_error(src, n, d, p)  # noqa: E731
             else:
@@ -180,6 +305,9 @@ def decide_na_policy(
                 lambda b, fn=fn, n=n, p=policy: fn(src, n, na_policy=p),
                 kind=kind,
                 input_error=err,
+                mode="convergence" if truncated else "aligned",
+                exclude=exclude,
+                min_compared=MIN_COMPARED if truncated else 0,
             )
             reports[policy] = check_export(export, {col: spec}, input_rounding=input_rounding)
         matching = tuple(p for p, r in reports.items() if r.passed)

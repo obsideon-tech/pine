@@ -32,9 +32,10 @@ from pine import ta
 from pine._cli import InputError, load_export
 from pine.bars import Bars
 from pine.io import TradingViewExport
-from pine.parity import ParityReport, PortSpec, check_export
+from pine.parity import ParityReport, PortSpec, check_export, convergence_bars, tolerance_for
 from pine.runtime import Context
 from pine.runtime import scalar as ps
+from pine.truncation import bar_offset, e0_bound, sync_point
 
 __all__ = [
     "CONSTANTS",
@@ -69,8 +70,22 @@ Hyp = Callable[[Bars], dict[str, np.ndarray]]
 # ------------------------------------------------------------------ shared inputs
 
 
-def _idx(b: Bars) -> np.ndarray:
-    return np.arange(len(b))
+class _At:
+    """Bars seen from a known offset: ``k`` is the true ``bar_index`` of the first row and
+    ``cols`` the exported columns (only used to anchor values that depend on unseen history)."""
+
+    def __init__(self, bars: Bars, k: int = 0, cols: dict | None = None):
+        self._b, self.k, self.cols = bars, k, cols or {}
+
+    def __getattr__(self, name):
+        return getattr(self._b, name)
+
+    def __len__(self) -> int:
+        return len(self._b)
+
+
+def _idx(b) -> np.ndarray:
+    return getattr(b, "k", 0) + np.arange(len(b))
 
 
 def _calls(b: Bars) -> np.ndarray:
@@ -157,20 +172,52 @@ def _trail_loop(b: Bars) -> np.ndarray:
     return out
 
 
-def _regime_loop(b: Bars) -> dict[str, np.ndarray]:
+def _regime_loop(b: Bars, per_call: bool) -> dict[str, np.ndarray]:
+    """The regime state machine. ``per_call``: ``ta.crossunder`` sits in the ``else if`` and
+    is evaluated only when the crossover is false, so its previous values are from its last
+    *evaluation*; after a one-bar whipsaw (crossover, then immediately back) it misses the
+    crossunder. ``every_bar``: crossunder evaluated on every bar."""
     f, s = ta.ema(b.close, K["FAST"]), ta.ema(b.close, K["SLOW"])
-    up, dn = ta.crossover(f, s), ta.crossunder(f, s)
+    up = ta.crossover(f, s)
+    dn_every = ta.crossunder(f, s)
     reg, bars_in = np.zeros(len(b)), np.zeros(len(b))
     r, k = 0.0, 0.0
+    pa = pb = np.nan  # crossunder's own previous inputs (per_call)
     for t in range(len(b)):
         if up[t]:
             r, k = 1.0, 0.0
-        elif dn[t]:
-            r, k = -1.0, 0.0
         else:
-            k += 1.0
+            if per_call:
+                dn = f[t] < s[t] and pa >= pb
+                pa, pb = f[t], s[t]
+            else:
+                dn = dn_every[t]
+            if dn:
+                r, k = -1.0, 0.0
+            else:
+                k += 1.0
         reg[t], bars_in[t] = r, k
     return {"regime": reg, "bars_in_regime": bars_in}
+
+
+def _anchored_cumsum(b, col: str) -> np.ndarray:
+    """Running sum of close. In a truncated export the sum of the unseen bars is unknown, so it
+    is anchored on the exported first value; the check then verifies every increment."""
+    c = np.cumsum(b.close)
+    if getattr(b, "k", 0) > 0 and col in b.cols:
+        c = c + (b.cols[col][0] - c[0])
+    return c
+
+
+def _barssince_closed(b, before_first: str) -> np.ndarray:
+    """``ta.barssince`` of the periodic event, from the true bar index (exact for any
+    offset): ``(g - PHASE) mod EVERY`` once the first event has happened."""
+    g = _idx(b)
+    e, ph = K["EVENT_EVERY"], K["EVENT_PHASE"]
+    out = ((g - ph) % e).astype(float)
+    if before_first == "na":
+        return np.where(g >= ph, out, np.nan)
+    return np.where(g >= ph, out, g.astype(float))
 
 
 def _st(b: Bars) -> dict[str, np.ndarray]:
@@ -209,7 +256,8 @@ GROUPS: dict[str, dict[str, Hyp]] = {
     },
     "var": {
         "cumulative": _cols(
-            var_acc=lambda b: np.cumsum(b.close), varip_acc=lambda b: np.cumsum(b.close)
+            var_acc=lambda b: _anchored_cumsum(b, "var_acc"),
+            varip_acc=lambda b: _anchored_cumsum(b, "varip_acc"),
         )
     },
     "branch_hist": {
@@ -249,12 +297,8 @@ GROUPS: dict[str, dict[str, Hyp]] = {
         "true": _cols(na_eq_na=lambda b: _const(b, 1)),
     },
     "barssince": {
-        "na_before_first": _cols(barssince=lambda b: ta.barssince(_events(b))),
-        "count_from_start": _cols(
-            barssince=lambda b: np.where(
-                np.isnan(ta.barssince(_events(b))), _idx(b), ta.barssince(_events(b))
-            )
-        ),
+        "na_before_first": _cols(barssince=lambda b: _barssince_closed(b, "na")),
+        "count_from_start": _cols(barssince=lambda b: _barssince_closed(b, "count")),
     },
     "valuewhen": {
         "na_before_first": _cols(valuewhen=lambda b: ta.valuewhen(_events(b), b.close)),
@@ -268,7 +312,10 @@ GROUPS: dict[str, dict[str, Hyp]] = {
     },
     "supertrend": {"manual_code": _st},
     "trail_stop": {"port": _cols(trail_stop=_trail_loop)},
-    "regime": {"port": _regime_loop},
+    "regime": {
+        "per_call": lambda b: _regime_loop(b, per_call=True),
+        "every_bar": lambda b: _regime_loop(b, per_call=False),
+    },
 }
 
 EXPECTED: dict[str, str] = {
@@ -280,7 +327,7 @@ EXPECTED: dict[str, str] = {
     "call_sites": "separate",
     "var": "cumulative",
     "branch_hist": "per_bar",
-    "rounding": "half_up",
+    "rounding": "half_away",  # confirmed by export 2026-11-03
     "mod": "truncated",
     "div_series": "float",
     "div_const": "float",
@@ -291,7 +338,7 @@ EXPECTED: dict[str, str] = {
     "change_na": "propagate",
     "supertrend": "manual_code",
     "trail_stop": "port",
-    "regime": "port",
+    "regime": "per_call",
 }
 
 COLUMNS: tuple[str, ...] = (
@@ -431,48 +478,153 @@ class GroupDecision:
     expected: str
     matching: tuple[str, ...]
     reports: dict[str, ParityReport]
+    excluded: str = "0"
+    """Rows excluded because they depend on history before the export ("0" if none)."""
+
+    @property
+    def undecided(self) -> bool:
+        """The expected hypothesis matches, but so does another: this export cannot tell
+        them apart (e.g. behaviour before the first event, when the export starts later)."""
+        return len(self.matching) > 1 and self.expected in self.matching
 
     @property
     def ok(self) -> bool:
-        return self.matching == (self.expected,)
+        return self.matching == (self.expected,) or self.undecided
+
+
+# In a truncated export, a history-dependent group must still compare this many rows.
+MIN_COMPARED = 100
+
+
+def _truncation_rule(group: str, b, tol: float):
+    """Rows to exclude for ``group`` when the export starts after the chart's first bar:
+    an int, or ``("sync", start)`` for stateful ports compared from their observed
+    synchronisation row (`pine.truncation`)."""
+    close = np.asarray(b.close)
+    e0 = e0_bound(close)
+    tr = ta.tr(b.high, b.low, b.close, handle_na=True)
+    e0_tr = e0_bound(tr)
+    every = K["CALL_EVERY"]
+
+    def cb(alpha, bound=e0):
+        return convergence_bars(alpha, tol, bound)
+
+    k = getattr(b, "k", 0)
+    rules = {
+        "cond_ema": every * (K["LEN"] - 1 + cb(2 / (K["LEN"] + 1))) + 2 * every,
+        "cond_sma": every * K["LEN"] + every,
+        "cond_userfn": 2 * every,
+        "cond_crossover": K["SLOW"] - 1 + cb(2 / (K["SLOW"] + 1)) + 2 * every,
+        "call_sites": 1,
+        "branch_hist": 2 * every,  # fair to `last_assigned`, which needs a call in the export
+        "valuewhen": (K["EVENT_PHASE"] - k) % K["EVENT_EVERY"],
+        "change_na": int(np.flatnonzero(~np.isnan(_src_na(b)))[0]) + 1,
+        "supertrend": ("sync", K["ST_ATR"] - 1 + cb(1 / K["ST_ATR"], e0_tr)),
+        "trail_stop": ("sync", K["TRAIL_ATR"] - 1 + cb(1 / K["TRAIL_ATR"], e0_tr)),
+        "regime": ("sync", K["SLOW"] - 1 + cb(2 / (K["SLOW"] + 1))),
+    }
+    return rules.get(group, 0)
 
 
 def decide(export: TradingViewExport) -> list[GroupDecision]:
-    """For each probe group, the hypotheses whose columns all pass in aligned mode."""
+    """For each probe group, the hypotheses whose columns all pass.
+
+    The exported ``bar_index`` gives the true bar number of the first row. If it is not 0, the
+    export starts after the chart's first bar and history-dependent groups are compared after
+    the exclusions of `_truncation_rule` (`pine.truncation`)."""
+    k = bar_offset(export.columns) or 0
+    b = _At(export.bars, k, export.columns)
+    n = len(export.bars)
     out = []
     for group, hyps in GROUPS.items():
+        cols_of = {name: hyp(b) for name, hyp in hyps.items()}
+        tols = {
+            c: tolerance_for("unbounded", export.observed_decimals.get(c))
+            for c in next(iter(cols_of.values()))
+        }
+        # Internal filters (EMAs, ATR) must converge to float precision, whatever the plotted
+        # column's own tolerance (0.5 for integer columns such as `regime`).
+        conv_tol = min(1e-10, min(float(np.min(t.atol)) for t in tols.values()))
+        rule = _truncation_rule(group, b, conv_tol) if k else 0
+        excluded_by: dict[str, str] = {}
         reports = {}
-        for name, hyp in hyps.items():
-            cols = hyp(export.bars)
-            specs = {c: PortSpec(lambda b, v=v: v, kind="unbounded") for c, v in cols.items()}
+        for name, cols in cols_of.items():
+            if isinstance(rule, tuple):  # stateful port: observed synchronisation row
+                start = min(rule[1], n)
+                r = max(
+                    sync_point(v, export.columns[c], tols[c].bound(export.columns[c]), start)
+                    for c, v in cols.items()
+                )
+                exclude = r if r <= n // 2 else start
+                excluded_by[name] = (
+                    f"{exclude} (synchronised)"
+                    if r <= n // 2
+                    else f"never in first half (from {start})"
+                )
+            else:
+                exclude = min(rule, n)
+                excluded_by[name] = str(exclude)
+            specs = {
+                c: PortSpec(
+                    lambda bb, v=v: v,
+                    kind="unbounded",
+                    tolerance=tols[c],
+                    mode="convergence" if exclude else "aligned",
+                    exclude=exclude,
+                    min_compared=MIN_COMPARED if exclude else 0,
+                )
+                for c, v in cols.items()
+            }
             reports[name] = check_export(export, specs)
         matching = tuple(h for h, r in reports.items() if r.passed)
-        out.append(GroupDecision(group, EXPECTED[group], matching, reports))
+        out.append(
+            GroupDecision(group, EXPECTED[group], matching, reports, excluded_by[EXPECTED[group]])
+        )
     return out
+
+
+def _status(d: GroupDecision) -> str:
+    if d.matching == (d.expected,):
+        return "ok"
+    if d.undecided:
+        return "not decidable in this export"
+    if any(c.inconclusive for c in d.reports[d.expected].columns):
+        return "inconclusive: export too short after exclusions"
+    return "**runtime must change**"
 
 
 def _summary(decisions: list[GroupDecision]) -> str:
     lines = [
         "## Pine semantics",
         "",
-        "| group | expected (runtime) | matching | status | first divergence of expected |",
-        "|---|---|---|---|---|",
+        "| group | expected (runtime) | matching | status | rows excluded "
+        "| first divergence of expected |",
+        "|---|---|---|---|---|---|",
     ]
     for d in decisions:
         exp_rep = d.reports[d.expected]
         fd = ", ".join(
             f"{c.name}: {c.first_divergence} ({c.divergence_type})"
             for c in exp_rep.columns
-            if not c.passed
+            if not c.passed and c.first_divergence is not None
         )
-        status = "ok" if d.ok else "**runtime must change**"
         lines.append(
-            f"| {d.group} | {d.expected} | {', '.join(d.matching) or '**none**'} | {status} "
-            f"| {fd or '—'} |"
+            f"| {d.group} | {d.expected} | {', '.join(d.matching) or '**none**'} "
+            f"| {_status(d)} | {d.excluded} | {fd or '—'} |"
         )
     bad = [d.group for d in decisions if not d.ok]
+    undecided = [d.group for d in decisions if d.undecided]
     verdict = "all groups match the runtime" if not bad else f"mismatched groups: {bad}"
-    lines += ["", f"Verdict: {verdict}", ""]
+    if undecided:
+        verdict += f"; not decidable in this export: {undecided}"
+    lines += [
+        "",
+        f"Verdict: {verdict}",
+        "",
+        "Rows excluded: history-dependent probes are compared only after the rows that depend "
+        "on bars before the export (PINE_PLAN.md §5.4, pine.truncation).",
+        "",
+    ]
     return "\n".join(lines)
 
 

@@ -155,6 +155,25 @@ Pine's state depends on the first bar loaded on the chart, not the first bar the
 at. Python must start on the same first bar as the export. If it cannot (truncated export,
 data gap), only convergence mode (§5.3) applies.
 
+**Truncated exports are the normal case** (observed 2026-11-03: the NFLX daily export began
+at `bar_index` 3116 of 6151). Since then (`pine.truncation`), the checkers read the true bar
+offset from the exported `bar_index` column (or, for a reference-only export, infer it modulo
+50 from the `src_na` gap pattern) and compare only what the export can establish:
+
+| Kind | Method | What is verified | What is not |
+|---|---|---|---|
+| windowed (sma, stdev, highest, lowest, tr) | exclude Python's own warm-up | every later bar, exactly | — |
+| seeded recursive (ema, rma, atr) | remove the predicted residual `r_w(1−α)^(t−w)`, compare from `w` | recursion and `α` on every bar | the seed |
+| RSI | convergence bound (B3) | bars after the bound | the seed |
+| probes keyed to `bar_index` | true bar numbers | exact | — |
+| `var` running sum | anchor on the first exported value | every increment | the pre-export sum |
+| stateful ports, recursive `*_na` | observed synchronisation row, which must fall in the first half of the export | every later bar | state before sync |
+
+A column that compares fewer than 100 bars after exclusions is **inconclusive**, not a pass
+(`ColumnReport.min_compared`). A probe whose hypotheses agree on every compared row (e.g.
+`barssince` before the first event, when the export starts later) is reported as *not
+decidable in this export* rather than confirmed.
+
 ### 5.5 Discrete outputs
 
 Booleans and categorical outputs (`ta.crossover`, Supertrend direction, signal flags) are
@@ -292,11 +311,13 @@ export-derived value in the test docstring:
   `freq` is `alert.freq_once_per_bar` (fires intrabar); a negative literal history index
   does not compile; `barstate.isnew`/`islast` differ between history and realtime as
   described;
-- execution model and scalar rules (`pine.runtime`, §11 E1): built-ins and user functions in
-  conditional code advance per call; call sites have separate histories; `math.round` ties go
-  up (`floor(x + 0.5)`); `%` truncates; `7 / 2 = 3.5` for ints; `int()` truncates toward zero;
-  `na == na` is false; `barssince`/`valuewhen` are `na` before the first event;
-  `ta.change` propagates `na` **(all unverified; probed by `tools/capture_semantics.pine`)**;
+- execution model and scalar rules (`pine.runtime`, §11 E1). **Confirmed by export
+  (2026-11-03, §12):** `math.round` ties round **away from zero** (`round(-2.5) = -3`; the
+  earlier `floor(x + 0.5)` assumption was wrong and is fixed); `%` truncates (`-7 % 3 = -1`);
+  `7 / 2 = 3.5` for series and const ints; `int()` truncates toward zero; `na == na` is false.
+  **Still unverified** (that export started mid-history; re-check with the offset-aware
+  checker): conditional built-ins and functions advance per call; separate call-site
+  histories; `barssince`/`valuewhen` before the first event; `ta.change` around `na`;
 - `ta.rsi` zero branches: `down == 0 → 100` checked before `up == 0 → 0`, so a flat series
   gives 100 **(unverified)**;
 - `ta.stdev`'s `biased` default (believed `true`, i.e. population) **(unverified)**;
@@ -874,14 +895,15 @@ hypothesis of each (what `pine.runtime` implements) and its alternatives:
 | `cond_ema`, `cond_sma`, `cond_userfn`, `cond_crossover` | `per_call` | `every_bar` |
 | `call_sites` | `separate` | `shared` |
 | `branch_hist` | `per_bar` | `last_assigned` |
-| `rounding` (2.5, −2.5, 3.5) | `half_up` = floor(x + 0.5) | `half_away`, `half_even` |
+| `rounding` (2.5, −2.5, 3.5) | `half_away` (**confirmed** 2026-11-03) | `half_up` (the original assumption, refuted), `half_even` |
 | `mod` (−7 % 3) | `truncated` (−1) | `floored` (2) |
 | `div_series`, `div_const` (7 / 2) | `float` (3.5) | `int` (3) |
 | `int_trunc` (int(−2.7)) | `toward_zero` | `floor` |
 | `na_eq_na` | `false` | `true` |
 | `barssince`, `valuewhen` | `na_before_first` | count from start / zero |
 | `change_na` | `propagate` | `last_valid` |
-| `alignment`, `var`, `supertrend`, `trail_stop`, `regime` | single (parity checks) | — |
+| `regime` (state machine with `else if ta.crossunder`) | `per_call` | `every_bar` (they differ after a one-bar whipsaw, found on long synthetic data) |
+| `alignment`, `var`, `supertrend`, `trail_stop` | single (parity checks) | — |
 
 Every expectation is **unverified**. Any mismatch makes the checker exit 1 and name the
 group; the fix is to change the runtime (and its scalar helper) to the observed hypothesis.
@@ -995,3 +1017,28 @@ E–H would multiply unverified semantics.
 What would most change the plan: an export showing that a current assumption is wrong (seeding,
 `na` handling, rounding). That is cheap to obtain and invalidates work built on top of it, so
 it stays first.
+
+## 12. Evidence log (external results)
+
+Results from real TradingView exports. Each row records what a specific export established,
+so "verified" claims can be traced. Exports themselves are kept outside the repository (§8).
+
+### 2026-11-03 — BATS:NFLX, 1D, both capture scripts
+
+Export rows 3035; first row `bar_index` 3116 of 6151 (the export started mid-history, which the
+checkers did not yet handle: most rows failed on warm-up `na` and history-dependent values).
+What it nevertheless established:
+
+| Item | Result |
+|---|---|
+| `ta.sma`, `ta.stdev` (population and sample), `ta.highest`, `ta.lowest`, `ta.tr` | **match** once Python's window is full: max error 1.3e-12 (stdev), 4.3e-14 (sma), exactly 0 (highest, lowest, tr) |
+| `ta.crossover`, `ta.crossunder` (on exported EMAs) | **match** exactly |
+| `ta.ema`, `ta.rma`, `ta.atr`, `ta.rsi` | error largest at Python's seed bar and shrinking: consistent with a pure seed difference; recursion not yet verified (needs the decay check, now implemented) |
+| `math.round` | **ties away from zero** — runtime changed (was `floor(x + 0.5)`) |
+| `%`, int division, `int()`, `na == na` | **as expected**: −1, 3.5, −2, false |
+| execution-model probes, `na` policy, ports | not decidable from this run (history offset); re-run `python -m pine.capture check` on the same file with the offset-aware checker |
+
+Consequences: `pine.truncation` (offset-aware, history-robust checks), `min_compared`
+(no vacuous passes), the regime probe split into `per_call`/`every_bar`, and a test-assumption
+bug fixed in the RSI affine-invariance property test (found by a random-seed run while
+validating these changes).
