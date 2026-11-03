@@ -83,7 +83,15 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
   unmeasured. Parity reports are Markdown or JSON (`to_json()`,
   `--format json`); HTML is deferred.
 
-Ranked next steps: [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps).
+- **Complex indicators are not yet supported with a parity guarantee.** Missing: Pine's
+  bar-by-bar execution model (stateful built-ins inside `if`, per-call-site history, `var`),
+  Pine scalar semantics, sessions and `request.security`, and most built-ins beyond the 11
+  above. Parity claims cover confirmed historical bars only; live/realtime behaviour cannot
+  be checked from exports.
+
+Ranked next steps: [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps)
+(built-ins and harness) and [§11](PINE_PLAN.md#11-review-3-2026-11-03-from-built-ins-to-complex-indicators)
+(complex indicators: execution model, sessions, multi-timeframe, port acceptance).
 
 ## What "matches" will mean
 

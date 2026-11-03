@@ -2,9 +2,11 @@
 
 Status, 2026-11-03: **P0, P2 and P3 built**; P1 built for the core subset (§7.5); P4 not
 started. **No built-in is verified against TradingView output yet** (§5.8): every check so
-far is self-referential (§8, §10). `pine` is a **public** repository (GitHub). Sections:
-parity spec (§5), lint (§6), data and operations (§7), risks (§8), checklist (§9), second
-review and next steps (§10).
+far is self-referential (§8, §10). **Complex indicators cannot yet be ported with a parity
+guarantee**: there is no emulation of Pine's execution model, sessions or
+`request.security` (§11). `pine` is a **public** repository (GitHub). Sections: parity spec
+(§5), lint (§6), data and operations (§7), risks (§8), checklist (§9), second review (§10),
+third review — complex indicators (§11).
 
 ## 1. What it is
 
@@ -55,7 +57,9 @@ documented here.
 | P1 | `pine.ta`: core built-ins with Pine semantics (see §7.5 for scope) | every built-in meets the two-oracle rule (§5.8), incl. warm-up `na` count | core subset built; oracles (a)+(b) only, (c) missing → **not done** |
 | P2 | `pine.parity`: tolerance report (§5.1–5.7), first divergent bar, warm-up/convergence modes, HTML/MD report | every mutation in the suite (§5.9) is detected at its expected bar | done; Markdown report only (HTML deferred) |
 | P3 | `pine.lint`: repainting rules with line numbers (§6) | each rule has a positive and negative fixture, incl. the safe `lookahead_on` idiom as a negative; zero findings on a known-clean script | done; precision/recall on real scripts unmeasured (§10 C3) |
-| P4 (optional) | transpiler for a declared Pine v5/v6 subset (series, `var`, `[]`, `if`, `for`, `ta.*`, `math.*`) | transpiled output passes `pine.parity` on 10 public indicators | not started |
+| P4 (optional) | transpiler for a declared Pine v5/v6 subset (series, `var`, `[]`, `if`, `for`, `ta.*`, `math.*`) | transpiled output passes `pine.parity` on 10 public indicators | not started; after P5–P6 (§11 J) |
+| P5 (new) | `pine.runtime`: bar-by-bar execution model — `Series` with history, `var`, per-call-site state, conditional evaluation (§11 E) | execution-model probes pass against a TradingView export; incremental built-ins equal `pine.ta` | not started |
+| P6 (new) | time, sessions and `request.security` emulation (§11 G) | capture of session/HTF probes passes, or documented feed differences | not started |
 
 P0–P3 were completed inside the cloud credit window (deadline 2026-11-05) by following the
 §7.5 cut order. P4 is not scheduled; §10 ranks the work that should come first.
@@ -470,6 +474,16 @@ Outcome: items 1–4 were completed on 2026-11-03; item 5 stays deferred behind 
   property tests and the mutants all derive from one recalled reading of the Pine manual. A
   coherent misreading (e.g. the `na`-window rule, §5.10) would pass every test in the suite.
   Only oracle (c), TradingView output, breaks the circle (§10 A1).
+- **Execution-model mismatch (largest risk for complex indicators).** Pine runs scripts bar by
+  bar: a stateful built-in called inside an `if` only updates on bars where it executes;
+  each call site of a function keeps its own history; `var` persists. Vectorised ports (all
+  of `pine.ta` today) silently diverge exactly where these rules matter (§11 E).
+- **Higher-timeframe data may not be reconstructible.** TradingView builds `request.security`
+  values from its own higher-timeframe feed (e.g. settlement-based daily bars, session
+  rules), which need not equal an aggregation of the chart's bars (§11 G2).
+- **Realtime behaviour is untestable by export.** Exports contain historical, confirmed bars
+  only; parity claims are therefore claims about confirmed bars, and repainting scripts can
+  match history while differing live (§6, §11 H1).
 - **Tolerances ignore rounded inputs.** If an export rounds OHLC, the port computes on
   rounded prices; the resulting output error is not covered by the output-rounding floor of
   §5.1 and is unbounded for RSI near `up + down → 0` (§10 A3).
@@ -585,6 +599,44 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
 - [x] **[med] C2 — Lint: block-aware alert gating** (§10 C2) — done 2026-11-03
       (`alerts_block_pos/neg.pine`: isconfirmed elsewhere, `or`, `not`, `else`, nested,
       continued and traced conditions).
+- [ ] **[high] E1 — Execution-model probes in a second capture script** (§11 E1)
+      - _Raised:_ 2026-11-03
+      - _Why:_ the runtime must copy TradingView's behaviour, which is observed, not recalled.
+      - _Done when:_ `tools/capture_semantics.pine` + `python -m pine.reference` support, each
+        probe with competing hypotheses (like `na_policy`) and a decided outcome from an export.
+- [ ] **[high] E2 — `pine.runtime` bar-by-bar execution model** (§11 E2)
+      - _Raised:_ 2026-11-03
+      - _Why:_ complex indicators are stateful and conditional; without the execution model a
+        port can pass on simple data and diverge where it matters.
+      - _Done when:_ incremental built-ins equal `pine.ta` (≤ 1e-12) on unconditional use; E1
+        probes pass; three stateful reference ports (Supertrend, a trailing stop, a pivot/zigzag
+        state machine) pass parity against exports.
+- [ ] **[high] H1 — Port acceptance protocol with intermediate-series parity** (§11 H1)
+      - _Raised:_ 2026-11-03
+      - _Why:_ a single output column says *that* a port diverges, not *where*.
+      - _Done when:_ documented procedure + `check_port` that reports the upstream-most
+        diverging intermediate and its first bar, and writes a port manifest.
+- [ ] **[med] F1 — Built-in batch 1 with capture coverage** (§11 F)
+      - _Raised:_ 2026-11-03
+      - _Why:_ complex indicators are built from more than the 11 current built-ins.
+      - _Done when:_ each listed built-in meets §5.8 (incl. oracle (c)), has an A3 sensitivity,
+        `alpha` where seeded, mutation cases, and capture columns.
+- [ ] **[med] H2 — Verification registry** (§11 H2)
+      - _Raised:_ 2026-11-03
+      - _Why:_ "verified" must be a recorded, checkable state per built-in, not prose.
+      - _Done when:_ `verification.yaml` with per-built-in oracle status and matrix rows; a test
+        fails if a public `ta` function lacks an entry; README table generated from it.
+- [ ] **[med] G1 — Sessions and calendar** (§11 G1)
+      - _Raised:_ 2026-11-03
+      - _Why:_ `ta.vwap` and session-based logic reset on session boundaries.
+      - _Done when:_ `Bars` carries a session spec; `time_close`, session-first-bar, DST cases
+        pass a capture.
+- [ ] **[med] G2 — `request.security` emulation** (§11 G2)
+      - _Raised:_ 2026-11-03
+      - _Why:_ multi-timeframe logic is common in complex indicators.
+      - _Done when:_ HTF alignment with lookahead on/off and gaps on/off passes a capture, or the
+        feed difference is documented and an exported HTF series can be supplied as input.
+- [ ] **[low] I — Decide whether strategy (`strategy.*`) parity is in scope** (§11 I) — owner.
 - [ ] **[med] C3 — Lint precision/recall on a local corpus** (§10 C3)
       - _Raised:_ 2026-11-03
       - _Why:_ rule quality on real scripts is unknown.
@@ -755,3 +807,144 @@ TradingView export terms; reserve `pine-parity` on PyPI.
 
 A1 + A2 together (one export session settles both), then B1 and A3 (small, correctness
 critical), then A4 and B2, then C1–C2, then D1–D2 at merge time. C3, B3, D3 and D4 follow.
+
+## 11. Review 3 (2026-11-03): from built-ins to complex indicators
+
+Goal restated: a Python port of **any** Pine indicator, including complex, stateful,
+multi-timeframe ones, should produce the same values as TradingView, and the toolkit should
+*prove* it per indicator, with the limits of the proof stated.
+
+### Objective assessment
+
+| Capability a complex indicator needs | Status | Consequence if missing |
+|---|---|---|
+| Built-ins correct in isolation | 11 built-ins; internal oracles only | unknown until A1 exports exist |
+| External evidence (TradingView values) | tooling ready, **no exports** | every "pass" is self-referential |
+| Pine execution model (bar loop, conditional evaluation, per-call-site state, `var`) | **absent** | ports diverge where state or branches matter, possibly only on some bars |
+| Pine scalar semantics (`math.round`, `%`, int/float division, `na` comparisons, `nz`, `fixnan`) | **unverified, not implemented** | small value differences that propagate through state |
+| Time, sessions, calendar | timestamps only | session resets (`ta.vwap`), time filters wrong |
+| `request.security` | lint only | multi-timeframe logic cannot be ported |
+| Built-in breadth | 11 of the commonly used ~40 | most real indicators need missing pieces |
+| Localising a divergence inside a port | output columns only | debugging a complex port is guesswork |
+| Strategy results (`strategy.*`) | out of scope so far | trade lists/P&L not comparable |
+
+The harness, tolerance theory (A3/A4), lint and capture tooling are in good shape. The gap is
+the **semantics layer between built-ins and whole scripts**, and evidence.
+
+### E. Execution model (highest priority after the exports)
+
+**E1. Observe before building: a semantics capture script.** Write
+`tools/capture_semantics.pine`, analogous to the reference capture, with one plot per probe
+and Python-side competing hypotheses decided by an export (the `na_policy` pattern of §10 A2):
+
+- stateful built-in called inside `if cond` vs outside — does `ta.ema` update only on executed
+  bars (expected), and what does the next unconditional read return;
+- a user function with internal `[1]` history called from two call sites — separate histories
+  (expected);
+- `var` accumulation, `varip` on history (should equal `var`), history of a variable assigned
+  only in some branches (`x[1]` after a non-executed assignment);
+- scalar semantics: `math.round(2.5)`, `math.round(-2.5)`, `-7 % 3`, `7 / 2` for `int` operands,
+  `int(-2.7)`, `na == na`, `nz`, `fixnan`;
+- `ta.change`, `ta.valuewhen`, `ta.barssince` around `na` and before the first event.
+
+These probes can go on the same chart and export session as A1/A2.
+
+**E2. `pine.runtime`.** A bar-by-bar interpreter-style framework, not a transpiler:
+
+- `Series` values with bounded history (`s[n]`, `na` beyond history, `max_bars_back`);
+- a script is a Python function run once per bar; stateful built-ins are **incremental
+  objects keyed by call site** (e.g. `ctx.ema("fast", src, 9)`), updated only when called —
+  reproducing conditional-evaluation semantics by construction;
+- `var`/`varip` as explicit per-script state; `na`-aware scalar helpers implementing the E1
+  outcomes.
+
+Validation: (i) every incremental built-in equals the vectorised `pine.ta` on unconditional
+use (a second, independent implementation: a new internal oracle), (ii) E1 probes,
+(iii) three stateful reference ports — Supertrend (direction state), a ratcheting trailing
+stop, and a pivot/zigzag state machine — passing parity against exports. Tradeoff: a Python
+bar loop costs microseconds per operation (≈ seconds for 10⁵ bars × 50 calls); `pine.ta`
+remains the fast path where no conditional semantics are involved.
+
+### F. Built-in breadth
+
+Batch 1, chosen by expected use in public indicators (to be re-ranked with C3's corpus
+counts): `ta.change`, `wma`, `vwma`, `hma`, `alma`, `swma`, `macd`, `bb`, `kc`, `stoch`,
+`cci`, `mfi`, `dmi`/ADX, `supertrend`, `sar`, `linreg`, `correlation`, `percentrank`, `cum`,
+`valuewhen`, `barssince`, `pivothigh`/`pivotlow`, `vwap`. Each must meet §5.8 including oracle
+(c), declare its A3 input sensitivity, `alpha` where seeded (A4), get mutation cases, and
+columns in a capture script (Pine's 64-plot limit means several captures, each with the
+consistency tests used for `reference_capture.pine`). Stateful/discrete outputs
+(Supertrend/SAR direction, pivots) are compared with `compare_discrete` and excuses.
+`pivothigh/low` and `valuewhen` also need delay semantics checked (a pivot is confirmed `right`
+bars later).
+
+### G. Time, sessions, multi-timeframe
+
+**G1. Sessions and calendar.** Extend `Bars` (or the manifest) with a session spec; implement
+`time_close`, day/week boundaries in the exchange time zone, session first/last bar, DST.
+Needed for `ta.vwap` (session-anchored by default) and any session-filtered logic. Verified
+with a capture across a DST change (already a matrix row, §10 A1).
+
+**G2. `request.security`.** Build higher-timeframe bars from chart bars with TradingView's
+alignment rules; implement `lookahead` on/off and `gaps` on/off; the non-repainting idiom
+returns the previous *completed* HTF bar. **Known limit:** TradingView's HTF values come from
+its own HTF feed, which can differ from aggregated chart bars (futures settlement, extended
+hours, adjustments). Therefore: validate with a capture that plots `request.security` results;
+where the feed differs, support supplying the exported HTF series as an input instead of
+reconstructing it, and say so in the port manifest. `request.security_lower_tf` deferred.
+
+### H. Port acceptance and evidence
+
+**H1. Port acceptance protocol** for any non-trivial indicator:
+
+1. `pine-lint` the source; parity claims apply to **confirmed historical bars** only, and a
+   repainting script's live behaviour is out of scope by construction.
+2. Instrument the Pine source with debug plots of key intermediate series.
+3. Export over the relevant §10 A1 matrix rows.
+4. `check_port` (new): aligned parity on outputs **and** intermediates; reports the
+   upstream-most intermediate that diverges and its first bar (divergence localisation), the
+   MDE of every column, and excused discrete flips.
+5. Write a port manifest: Pine source hash and version, inputs, port version, matrix rows
+   passed, tolerances, MDE, date.
+
+**H2. Verification registry.** A checked-in `verification.yaml` recording, per built-in and
+per accepted port, which oracles passed and on which matrix rows; tests fail if a public
+`ta` function lacks an entry; the README status table is generated from it. "Verified" becomes
+data, not prose.
+
+**H3. Re-capture cadence.** TradingView can change built-ins, data feeds or Pine versions.
+Re-run the capture exports quarterly and on any Pine version change; compare with stored
+numbers; a difference is either a TradingView change (record it) or a regression.
+
+**H4. Error budgets for long chains.** In a deep port, rounding allowances compose:
+sensitivities multiply along the chain (Lipschitz composition), and RSI-like stages amplify.
+Later option: have `pine.runtime` propagate per-bar error bounds alongside values (interval
+arithmetic) so A3 allowances follow automatically for any port. Tradeoff: complexity and
+over-conservative bounds through `max`/branches; defer until a real port needs it.
+
+### I. Strategies (decision for the owner)
+
+If "same results" includes backtests, `strategy.*` needs a broker emulator (order types, the
+OHLC path assumption for intrabar fills, `process_orders_on_close`, pyramiding, commission,
+slippage, margin) and a different reference: TradingView's *List of Trades* export, compared
+trade by trade. This is a project of similar size to E–G. Recommendation: finish indicator
+parity first; decide explicitly whether strategy parity is a goal.
+
+### J. Transpiler, last
+
+A Pine → Python transpiler (P4) should target `pine.runtime`, not emit vectorised code: it
+then only translates syntax, while semantics live in one validated place. Building it before
+E–H would multiply unverified semantics.
+
+### Suggested order
+
+1. **Owner:** A1/A2 exports, adding the E1 semantics probes to the same session.
+2. E1 checker and hypotheses → E2 runtime with the three stateful reference ports.
+3. H1 protocol + `check_port`, H2 registry.
+4. F batch 1, re-ranked by C3 corpus counts (C3 doubles as a usage survey).
+5. G1 sessions → G2 `request.security`.
+6. Owner decision on I; J only after the above.
+
+What would most change the plan: an export showing that a current assumption is wrong (seeding,
+`na` handling, rounding). That is cheap to obtain and invalidates work built on top of it, so
+it stays first.
