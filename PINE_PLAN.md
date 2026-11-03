@@ -58,7 +58,7 @@ documented here.
 | P2 | `pine.parity`: tolerance report (§5.1–5.7), first divergent bar, warm-up/convergence modes, HTML/MD report | every mutation in the suite (§5.9) is detected at its expected bar | done; Markdown report only (HTML deferred) |
 | P3 | `pine.lint`: repainting rules with line numbers (§6) | each rule has a positive and negative fixture, incl. the safe `lookahead_on` idiom as a negative; zero findings on a known-clean script | done; precision/recall on real scripts unmeasured (§10 C3) |
 | P4 (optional) | transpiler for a declared Pine v5/v6 subset (series, `var`, `[]`, `if`, `for`, `ta.*`, `math.*`) | transpiled output passes `pine.parity` on 10 public indicators | not started; after P5–P6 (§11 J) |
-| P5 (new) | `pine.runtime`: bar-by-bar execution model — `Series` with history, `var`, per-call-site state, conditional evaluation (§11 E) | execution-model probes pass against a TradingView export; incremental built-ins equal `pine.ta` | not started |
+| P5 (new) | `pine.runtime`: bar-by-bar execution model — `Series` with history, `var`, per-call-site state, conditional evaluation (§11 E) | execution-model probes pass against a TradingView export; incremental built-ins equal `pine.ta` | **in progress**: runtime built, equals `pine.ta` bit for bit; export pending |
 | P6 (new) | time, sessions and `request.security` emulation (§11 G) | capture of session/HTF probes passes, or documented feed differences | not started |
 
 P0–P3 were completed inside the cloud credit window (deadline 2026-11-05) by following the
@@ -292,6 +292,11 @@ export-derived value in the test docstring:
   `freq` is `alert.freq_once_per_bar` (fires intrabar); a negative literal history index
   does not compile; `barstate.isnew`/`islast` differ between history and realtime as
   described;
+- execution model and scalar rules (`pine.runtime`, §11 E1): built-ins and user functions in
+  conditional code advance per call; call sites have separate histories; `math.round` ties go
+  up (`floor(x + 0.5)`); `%` truncates; `7 / 2 = 3.5` for ints; `int()` truncates toward zero;
+  `na == na` is false; `barssince`/`valuewhen` are `na` before the first event;
+  `ta.change` propagates `na` **(all unverified; probed by `tools/capture_semantics.pine`)**;
 - `ta.rsi` zero branches: `down == 0 → 100` checked before `up == 0 → 0`, so a flat series
   gives 100 **(unverified)**;
 - `ta.stdev`'s `biased` default (believed `true`, i.e. population) **(unverified)**;
@@ -604,6 +609,10 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Why:_ the runtime must copy TradingView's behaviour, which is observed, not recalled.
       - _Done when:_ `tools/capture_semantics.pine` + `python -m pine.reference` support, each
         probe with competing hypotheses (like `na_policy`) and a decided outcome from an export.
+      - _Progress 2026-11-03:_ **tooling done** — `tools/capture_semantics.pine` (26 plots, 20
+        probe groups), `python -m pine.semantics` (md/json; exit 1 names any group where
+        TradingView differs from the runtime). Every multi-hypothesis group is shown to
+        discriminate on fixture data. **Remaining: one export (owner).**
 - [ ] **[high] E2 — `pine.runtime` bar-by-bar execution model** (§11 E2)
       - _Raised:_ 2026-11-03
       - _Why:_ complex indicators are stateful and conditional; without the execution model a
@@ -611,6 +620,13 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       - _Done when:_ incremental built-ins equal `pine.ta` (≤ 1e-12) on unconditional use; E1
         probes pass; three stateful reference ports (Supertrend, a trailing stop, a pivot/zigzag
         state machine) pass parity against exports.
+      - _Progress 2026-11-03:_ **runtime built** (`pine.runtime`): incremental built-ins equal
+        `pine.ta` **bit for bit** (property test, incl. `na` gaps); the runtime reproduces the
+        expected hypothesis of every probe exactly; three stateful ports (Supertrend, ratcheting
+        stop, regime state machine with a conditionally evaluated crossunder) run on it, and the
+        Supertrend port equals an independent loop implementation (`pine.ta.supertrend`).
+        The zigzag port was replaced by the regime machine, which exercises conditional
+        evaluation directly. **Remaining: parity against an export.**
 - [ ] **[high] H1 — Port acceptance protocol with intermediate-series parity** (§11 H1)
       - _Raised:_ 2026-11-03
       - _Why:_ a single output column says *that* a port diverges, not *where*.
@@ -849,6 +865,27 @@ and Python-side competing hypotheses decided by an export (the `na_policy` patte
 
 These probes can go on the same chart and export session as A1/A2.
 
+*Status 2026-11-03: tooling done.* `tools/capture_semantics.pine` + `pine.semantics`
+(`python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml`). 20 probe groups; the expected
+hypothesis of each (what `pine.runtime` implements) and its alternatives:
+
+| Group | Expected (runtime) | Alternatives |
+|---|---|---|
+| `cond_ema`, `cond_sma`, `cond_userfn`, `cond_crossover` | `per_call` | `every_bar` |
+| `call_sites` | `separate` | `shared` |
+| `branch_hist` | `per_bar` | `last_assigned` |
+| `rounding` (2.5, −2.5, 3.5) | `half_up` = floor(x + 0.5) | `half_away`, `half_even` |
+| `mod` (−7 % 3) | `truncated` (−1) | `floored` (2) |
+| `div_series`, `div_const` (7 / 2) | `float` (3.5) | `int` (3) |
+| `int_trunc` (int(−2.7)) | `toward_zero` | `floor` |
+| `na_eq_na` | `false` | `true` |
+| `barssince`, `valuewhen` | `na_before_first` | count from start / zero |
+| `change_na` | `propagate` | `last_valid` |
+| `alignment`, `var`, `supertrend`, `trail_stop`, `regime` | single (parity checks) | — |
+
+Every expectation is **unverified**. Any mismatch makes the checker exit 1 and name the
+group; the fix is to change the runtime (and its scalar helper) to the observed hypothesis.
+
 **E2. `pine.runtime`.** A bar-by-bar interpreter-style framework, not a transpiler:
 
 - `Series` values with bounded history (`s[n]`, `na` beyond history, `max_bars_back`);
@@ -864,6 +901,16 @@ use (a second, independent implementation: a new internal oracle), (ii) E1 probe
 stop, and a pivot/zigzag state machine — passing parity against exports. Tradeoff: a Python
 bar loop costs microseconds per operation (≈ seconds for 10⁵ bars × 50 calls); `pine.ta`
 remains the fast path where no conditional semantics are involved.
+
+*Status 2026-11-03: built.* `pine.runtime`: `run(script, bars)`, `ctx.series` / `ctx.var` /
+`ctx.call` / `ctx.plot`, `ctx.ta.*` (sma, ema, rma, rsi, stdev, highest, lowest, tr, atr,
+crossover, crossunder, change, barssince, valuewhen), `pine.runtime.scalar`. Keys are explicit
+strings; reusing a key in one bar raises (it caught a copy-paste in the capture port during
+development). History is per execution of a declaration, so the same mechanism gives per-bar
+history at top level and per-call history inside branches and functions. Only the `propagate`
+na policy is implemented until A2 is decided. Validation without exports: bit-for-bit equality
+with `pine.ta`, exact reproduction of every expected probe hypothesis, and the Supertrend port
+equal to an independent loop implementation.
 
 ### F. Built-in breadth
 

@@ -2,8 +2,9 @@
 Port TradingView indicators, with a check that the Python output matches Pine bar for bar before you trust it.
 
 **Status:** pre-alpha. Done: bar schema, TradingView CSV loader, fixture manifests, parity
-harness with mutation suite, and `ta.sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`,
-`tr`, `atr`, `crossover`, `crossunder`, and the `pine-lint` repainting check. The built-ins
+harness with mutation suite, `ta.sma`, `ema`, `rma`, `rsi`, `stdev`, `highest`, `lowest`, `tr`,
+`atr`, `crossover`, `crossunder`, `change`, `barssince`, `valuewhen`, `supertrend`, the
+`pine.runtime` bar-by-bar execution model, and the `pine-lint` repainting check. The built-ins
 pass closed-form and property tests but have **not yet been checked against TradingView
 output**; do not rely on them until they have. See [`PINE_PLAN.md`](PINE_PLAN.md).
 
@@ -65,6 +66,34 @@ uv run python -m pine.reference EXPORT.csv --manifest EXPORT.yaml
 It reports aligned-mode parity for every core built-in and which `na`-handling hypothesis
 TradingView follows. See [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps).
 
+Porting stateful or conditional logic: write the port in Pine's shape on `pine.runtime`, which
+runs the script bar by bar with Pine's execution model (history per execution, `var`, separate
+state per call site, built-ins that advance only when called):
+
+```python
+from pine.runtime import run
+
+
+def script(ctx):
+    fast = ctx.ta.ema("fast", ctx.close.value, 9)
+    slow = ctx.ta.ema("slow", ctx.close.value, 21)
+    bars_in = ctx.var("bars_in", 0)
+    if ctx.ta.crossover("up", fast, slow):
+        bars_in.set(0)
+    else:
+        bars_in.set(bars_in.value + 1)
+    ctx.plot("bars_in", bars_in.value)
+
+
+result = run(script, exp.bars)
+```
+
+The semantics `pine.runtime` assumes are themselves checked by a second capture script:
+
+```bash
+uv run python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml
+```
+
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
 manifest describing how it was produced; see `src/pine/manifest.py`.
 
@@ -83,10 +112,10 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
   unmeasured. Parity reports are Markdown or JSON (`to_json()`,
   `--format json`); HTML is deferred.
 
-- **Complex indicators are not yet supported with a parity guarantee.** Missing: Pine's
-  bar-by-bar execution model (stateful built-ins inside `if`, per-call-site history, `var`),
-  Pine scalar semantics, sessions and `request.security`, and most built-ins beyond the 11
-  above. Parity claims cover confirmed historical bars only; live/realtime behaviour cannot
+- **Complex indicators are not yet supported with a parity guarantee.** `pine.runtime` now
+  provides Pine's bar-by-bar execution model and scalar rules, but those semantics are
+  *expected*, not yet confirmed by a `capture_semantics.pine` export. Still missing: sessions,
+  `request.security`, and most built-ins beyond the ones above. Parity claims cover confirmed historical bars only; live/realtime behaviour cannot
   be checked from exports.
 
 Ranked next steps: [`PINE_PLAN.md` §10](PINE_PLAN.md#10-review-2-2026-11-03-next-steps)

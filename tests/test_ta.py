@@ -382,3 +382,39 @@ def test_policies_identical_on_gap_free_input(x, n):
         ref = fn(x, n)
         for p in ("skip", "skip_na_out"):
             np.testing.assert_array_equal(fn(x, n, na_policy=p), ref)
+
+
+# ======================= change / barssince / valuewhen / supertrend =======================
+
+
+def test_change_barssince_valuewhen_hand_values():
+    np.testing.assert_array_equal(ta.change([1.0, 2.0, 4.0, NAN, 5.0]), [NAN, 1, 2, NAN, NAN])
+    np.testing.assert_array_equal(ta.change([1.0, 2.0, 4.0], 2), [NAN, NAN, 3])
+    np.testing.assert_array_equal(ta.barssince([0, 1, 0, 0, 1, 0]), [NAN, 0, 1, 2, 0, 1])
+    np.testing.assert_array_equal(
+        ta.valuewhen([0, 1, 0, 1, 0], [1.0, 2, 3, 4, 5], 1), [NAN, NAN, NAN, 2, 2]
+    )
+    with pytest.raises(ValueError):
+        ta.valuewhen([1], [1.0], -1)
+    with pytest.raises(ValueError):
+        ta.valuewhen([1, 0], [1.0], 0)
+
+
+def test_supertrend_properties():
+    rng = np.random.default_rng(8)
+    c = 100 + np.cumsum(rng.normal(0, 1, 300))
+    h, lo = c + np.abs(rng.normal(0, 0.5, 300)), c - np.abs(rng.normal(0, 0.5, 300))
+    line, d = ta.supertrend(h, lo, c, 3.0, 10)
+    assert set(np.unique(d)) == {-1.0, 1.0}
+    a = ta.atr(h, lo, c, 10)
+    ok = np.arange(300) >= 11
+    up = ok & (d == -1)
+    dn = ok & (d == 1)
+    # Uptrend: the line is a lower band and never sits above that bar's high.
+    assert np.all(line[up] <= h[up])
+    # The line never moves against the trend while the direction is unchanged.
+    same = ok[1:] & (d[1:] == d[:-1]) & ok[:-1]
+    rising_ok = np.where(d[1:] == -1, line[1:] >= line[:-1] - 1e-12, line[1:] <= line[:-1] + 1e-12)
+    assert np.all(rising_ok[same])
+    assert np.all(np.isfinite(line[ok])) and np.isfinite(a[ok]).all()
+    assert dn.any() and up.any()

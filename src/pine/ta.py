@@ -54,6 +54,10 @@ __all__ = [
     "atr",
     "crossover",
     "crossunder",
+    "change",
+    "barssince",
+    "valuewhen",
+    "supertrend",
 ]
 
 
@@ -353,3 +357,113 @@ def crossunder(a: ArrayLike, b: ArrayLike) -> np.ndarray:
     with np.errstate(invalid="ignore"):
         out[1:] = (a_[1:] < b_[1:]) & (a_[:-1] >= b_[:-1])
     return out
+
+
+def change(source: ArrayLike, length: int = 1) -> np.ndarray:
+    """``ta.change(source, length)``: ``source - source[length]``; `na` if either is `na`
+    (**unverified**: the alternative "last valid value" is probed by
+    ``tools/capture_semantics.pine``)."""
+    n_len = _length(length)
+    x = _source(source)
+    out = np.full(x.size, np.nan)
+    out[n_len:] = x[n_len:] - x[:-n_len]
+    return out
+
+
+def barssince(condition: ArrayLike) -> np.ndarray:
+    """``ta.barssince(condition)``: bars since ``condition`` was last true (0 on a true bar);
+    `na` before the first true bar (**unverified**, probed)."""
+    c = np.asarray(condition, dtype=bool)
+    out = np.full(c.size, np.nan)
+    count = math.nan
+    for t in range(c.size):
+        if c[t]:
+            count = 0.0
+        elif not math.isnan(count):
+            count += 1.0
+        out[t] = count
+    return out
+
+
+def valuewhen(condition: ArrayLike, source: ArrayLike, occurrence: int = 0) -> np.ndarray:
+    """``ta.valuewhen(condition, source, occurrence)``: ``source`` on the ``occurrence``-th most
+    recent bar where ``condition`` was true (0 = latest); `na` before enough events."""
+    if occurrence < 0:
+        raise ValueError("occurrence must be >= 0")
+    c = np.asarray(condition, dtype=bool)
+    x = _source(source)
+    if c.size != x.size:
+        raise ValueError("condition and source must have the same length")
+    out = np.full(x.size, np.nan)
+    hits: list[float] = []
+    for t in range(x.size):
+        if c[t]:
+            hits.append(x[t])
+        if len(hits) > occurrence:
+            out[t] = hits[-1 - occurrence]
+    return out
+
+
+def supertrend(
+    high: ArrayLike, low: ArrayLike, close: ArrayLike, factor: float, atr_period: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """``ta.supertrend(factor, atrPeriod)`` -> ``(supertrend, direction)``. Manual's code::
+
+        src = hl2
+        atr = ta.atr(atrPeriod)
+        upperBand = src + factor * atr
+        lowerBand = src - factor * atr
+        prevLowerBand = nz(lowerBand[1])
+        prevUpperBand = nz(upperBand[1])
+        lowerBand := lowerBand > prevLowerBand or close[1] < prevLowerBand ?
+             lowerBand : prevLowerBand
+        upperBand := upperBand < prevUpperBand or close[1] > prevUpperBand ?
+             upperBand : prevUpperBand
+        int _direction = na
+        float superTrend = na
+        prevSuperTrend = superTrend[1]
+        if na(atr[1])
+            _direction := 1
+        else if prevSuperTrend == prevUpperBand
+            _direction := close > upperBand ? -1 : 1
+        else
+            _direction := close < lowerBand ? 1 : -1
+        superTrend := _direction == -1 ? lowerBand : upperBand
+
+    Direction ``-1`` is an uptrend (line below price), ``1`` a downtrend. ``lowerBand[1]`` is the
+    *final* (reassigned) value of the previous bar. Comparisons with `na` are false, so during
+    ATR warm-up the lower band holds ``nz(na) = 0``, exactly as the Pine code does. A plain loop,
+    independent of `pine.runtime`, used as its second implementation (**unverified** against
+    TradingView until a capture export exists).
+    """
+    h, lo, c = _source(high), _source(low), _source(close)
+    a = atr(h, lo, c, atr_period)
+    src = (h + lo) / 2
+    n = c.size
+    st = np.full(n, np.nan)
+    direction = np.full(n, np.nan)
+    lower_f = np.full(n, np.nan)
+    upper_f = np.full(n, np.nan)
+
+    def nz(v: float) -> float:
+        return 0.0 if math.isnan(v) else v
+
+    for t in range(n):
+        lb = src[t] - factor * a[t]
+        ub = src[t] + factor * a[t]
+        prev_lb = nz(lower_f[t - 1]) if t > 0 else 0.0
+        prev_ub = nz(upper_f[t - 1]) if t > 0 else 0.0
+        prev_close = c[t - 1] if t > 0 else math.nan
+        lb = lb if (lb > prev_lb or prev_close < prev_lb) else prev_lb
+        ub = ub if (ub < prev_ub or prev_close > prev_ub) else prev_ub
+        lower_f[t], upper_f[t] = lb, ub
+        prev_st = st[t - 1] if t > 0 else math.nan
+        if t == 0 or math.isnan(a[t - 1]):
+            d = 1.0
+        elif prev_st == prev_ub:
+            d = -1.0 if c[t] > ub else 1.0
+        else:
+            d = 1.0 if c[t] < lb else -1.0
+        direction[t] = d
+        st[t] = lb if d == -1.0 else ub
+    return st, direction

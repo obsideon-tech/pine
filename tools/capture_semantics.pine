@@ -1,0 +1,120 @@
+//@version=6
+// pine semantics capture (PINE_PLAN.md §11 E1)
+//
+// Observes Pine's execution model and scalar rules, which pine.runtime must reproduce:
+// conditional evaluation of built-ins and user functions, per-call-site history, var/varip,
+// branch-assigned history, math.round, %, int division, int(), na comparisons, barssince,
+// valuewhen, change around na, and three stateful ports (Supertrend, a ratcheting stop, a
+// regime state machine). Self-written and public.
+//
+// Use: add to a chart, "Export chart data..." with the full loaded history, then
+//   uv run python -m pine.semantics EXPORT.csv --manifest EXPORT.yaml
+//
+// Plot titles and constants must match src/pine/semantics.py (tests/test_semantics.py).
+// TradingView will warn that some ta.* calls are not executed on every bar: that is the point.
+indicator("pine semantics capture", overlay = false, precision = 10)
+
+const int CALL_EVERY = 3
+const int EVENT_EVERY = 7
+const int EVENT_PHASE = 3
+const int LEN = 5
+const int GAP_PERIOD = 50
+const int GAP_WIDTH = 3
+const int FAST = 9
+const int SLOW = 21
+const int ST_ATR = 10
+const float ST_FACTOR = 3.0
+const int TRAIL_ATR = 14
+const float TRAIL_MULT = 2.0
+
+// Alignment check (§5.4): must equal 0, 1, 2, ... from the first exported row.
+plot(bar_index, "bar_index")
+
+bool c = bar_index % CALL_EVERY == 0
+
+// Built-ins and a user function called only when c is true.
+float condEma = na
+if c
+    condEma := ta.ema(close, LEN)
+plot(condEma, "cond_ema")
+
+float condSma = na
+if c
+    condSma := ta.sma(close, LEN)
+plot(condSma, "cond_sma")
+
+diff(float x) => x - x[1]
+
+float condDiff = na
+if c
+    condDiff := diff(close)
+plot(condDiff, "cond_userfn_diff")
+
+fastE = ta.ema(close, FAST)
+slowE = ta.ema(close, SLOW)
+float condCross = na
+if c
+    condCross := ta.crossover(fastE, slowE) ? 1 : 0
+plot(condCross, "cond_crossover")
+
+// Two call sites of the same function, every bar.
+plot(diff(close), "site_a_diff")
+plot(diff(open), "site_b_diff")
+
+// var / varip on historical bars.
+var float acc = 0.0
+acc += close
+plot(acc, "var_acc")
+varip float accip = 0.0  // pine-lint: ignore[varip]
+accip += close
+plot(accip, "varip_acc")
+
+// History of a variable assigned only in some bars.
+float y = na
+if c
+    y := close
+plot(y[1], "branch_hist")
+
+// Scalar rules.
+plot(math.round(2.5), "round_pos_half")
+plot(math.round(-2.5), "round_neg_half")
+plot(math.round(3.5), "round_odd_half")
+int seven = 7 + bar_index * 0
+plot(-seven % 3, "mod_neg")
+plot(seven / 2, "div_int_series")
+plot(7 / 2, "div_int_const")
+plot(int(-2.7), "int_trunc")
+float n = na
+plot(n == n ? 1 : 0, "na_eq_na")
+
+// Event-based built-ins, before and after the first event.
+bool ev = bar_index % EVENT_EVERY == EVENT_PHASE
+plot(ta.barssince(ev), "barssince")
+plot(ta.valuewhen(ev, close, 0), "valuewhen")
+
+float srcNa = bar_index % GAP_PERIOD >= GAP_PERIOD - GAP_WIDTH ? na : close
+plot(ta.change(srcNa), "change_na")
+
+// Stateful ports.
+[st, stDir] = ta.supertrend(ST_FACTOR, ST_ATR)
+plot(st, "supertrend")
+plot(stDir, "supertrend_dir")
+
+atrT = ta.atr(TRAIL_ATR)
+candidate = close - TRAIL_MULT * atrT
+var float trail = na
+trail := na(trail) ? candidate : close < trail ? candidate : math.max(trail, candidate)
+plot(trail, "trail_stop")
+
+var int regime = 0
+var int barsIn = 0
+if ta.crossover(fastE, slowE)
+    regime := 1
+    barsIn := 0
+else if ta.crossunder(fastE, slowE)
+    regime := -1
+    barsIn := 0
+else
+    barsIn += 1
+plot(regime, "regime")
+plot(barsIn, "bars_in_regime")
