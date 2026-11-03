@@ -28,6 +28,12 @@ exported and checked with ``python -m pine.capture check``):
   the tick away from a better fill — sell limit / buy stop up, buy limit / sell stop down.
   Alternative: ``"nearest"``. Observed once (a sell limit 0.0029514 filled at 0.00296); the
   stop direction is inferred by symmetry, **unverified**.
+- ``path_basis="raw"``: which extreme is nearer the open is judged on the *unrounded* bar,
+  while levels are checked against the rounded one. Alternative: ``"rounded"`` (ties then go
+  high first). Observed once (DOGE row 231: rounded bar symmetric, raw low nearer, TradingView
+  hit the stop).
+- Rounding to the nearest tick is plain float ``floor(x / mintick + 0.5)``: exact ties in
+  decimal often sit just below .5 in binary and round down (observed, DOGE rows 44 and 133).
 
 A ``strategy.entry`` in the direction opposite to the open position closes it and opens the
 new one at the same fill (a reversal). ``P&L = (exit - entry) * qty`` for longs (point value 1).
@@ -56,6 +62,7 @@ class StrategyConfig:
     mintick: float | None = None
     price_rounding: Literal["tick", "none"] = "tick"
     order_rounding: Literal["conservative", "nearest"] = "conservative"
+    path_basis: Literal["raw", "rounded"] = "raw"
 
     def __post_init__(self) -> None:
         if self.mintick is not None and not self.mintick > 0:
@@ -178,7 +185,9 @@ class Broker:
             return x
         k = x / t
         if mode == "nearest":
-            n = math.floor(k + 0.5 + 1e-9)
+            # Plain float rounding, as TradingView evidently does: 0.002695 / 0.00001 is
+            # 269.49999999999994 in binary, so it rounds to 269 (observed, DOGE rows 44, 133).
+            n = math.floor(k + 0.5)
         elif mode == "up":
             n = math.ceil(k - 1e-9)
         else:
@@ -200,12 +209,15 @@ class Broker:
         up = (kind == "limit" and sell) or (kind == "stop" and not sell)
         return self._round(level, "up" if up else "down")
 
-    def _path(self, o: float, h: float, lo: float, c: float) -> list[float]:
-        if self.config.path == "high_first" or abs(h - o) <= abs(o - lo):
+    def _path(self, o: float, h: float, lo: float, c: float, raw=None) -> list[float]:
+        ro, rh, rl = (
+            raw[:3] if (raw is not None and self.config.path_basis == "raw") else (o, h, lo)
+        )
+        if self.config.path == "high_first" or abs(rh - ro) <= abs(ro - rl):
             return [o, h, lo, c]
         return [o, lo, h, c]
 
-    def _check_brackets(self, bar: int, o: float, h: float, lo: float, c: float) -> None:
+    def _check_brackets(self, bar: int, o: float, h: float, lo: float, c: float, raw=None) -> None:
         if self.size == 0:
             self._brackets.clear()
             return
@@ -240,7 +252,7 @@ class Broker:
             if not math.isnan(b.limit) and limit_hit(o, b.limit):
                 self._realize(bar, o if gap else b.limit)
                 return
-        pts = self._path(o, h, lo, c)
+        pts = self._path(o, h, lo, c, raw)
         for p0, p1 in zip(pts, pts[1:], strict=False):
             hits = []
             for b in live:
@@ -257,11 +269,12 @@ class Broker:
 
     # Called by pine.runtime.run around each script execution.
     def _before_script(self, bar: int, o: float, h: float, lo: float, c: float) -> None:
-        o, h, lo, c = (self._price(v) for v in (o, h, lo, c))
+        raw = (o, h, lo, c)
+        o, h, lo, c = (self._price(v) for v in raw)
         self._bar, self._close = bar, c
         if self.config.fill_timing == "next_open":
             self._fill_pending(bar, o)
-        self._check_brackets(bar, o, h, lo, c)
+        self._check_brackets(bar, o, h, lo, c, raw)
 
     def _after_script(self, bar: int, c: float) -> None:
         if self.config.fill_timing == "same_close":
