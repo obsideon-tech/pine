@@ -128,6 +128,23 @@ warm-up hides seeding bugs** — a port with the wrong seed converges and passes
 
 The report always states the mode used and the number of bars excluded.
 
+**Composite indicators** (implemented 2026-11-03, `pine.convergence`). For a Python history
+that is a suffix of Pine's, with Python's seed bar `w`:
+
+| Indicator | Per-bar bound on `|py − pine|` | Why |
+|---|---|---|
+| ATR | `e₀ (1 − 1/L)^(t−w)`, `e₀ ≤ max TR` | from Python's second bar the true ranges agree, so only the RMA state at `w` differs, and that decays exactly geometrically; both ATRs are convex combinations of non-negative true ranges |
+| RSI | `min(100, 100·M·(1 − 1/L)^(t−w) / (U′_t + D′_t))` | `u, d ∈ [0, M]` (`M` = largest bar-to-bar move) so `|ΔU|, |ΔD| ≤ M` at `w`, decaying geometrically; then `|ΔRSI| ≤ 100·max(|ΔU|, |ΔD|)/(U′+D′)` |
+
+`atr_convergence_bars` / `rsi_convergence_bars` return the exclusion for
+`compare_series(mode="convergence", exclude=n)`. RSI's answer depends on the data, not only on
+`L`: a quiet stretch after a volatile one (large `M`, small `U′+D′`) needs more bars. The
+unseen history's magnitude (`e₀`, `M`) defaults to what Python's data shows — an explicit
+assumption; pass larger values if earlier history may have been more volatile. Tests:
+Hypothesis checks that the bounds cover the realised error across random histories,
+truncations, lengths and volatilities; the computed exclusion passes while a short one fails;
+the ATR residual is shown to decay exactly geometrically.
+
 ### 5.4 History alignment
 
 Pine's state depends on the first bar loaded on the chart, not the first bar the user looks
@@ -543,10 +560,8 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
       2026-11-03: `PortSpec(kind="discrete", excuse=...)`, `ParityReport.to_dict/to_json`,
       `python -m pine.reference --format json`; capture crossovers now use the two-bar excuse
       on the exported EMAs.
-- [ ] **[med] B3 — Composite convergence bounds for RSI and ATR** (§10 B3)
-      - _Raised:_ 2026-11-03
-      - _Why:_ `convergence_bars` covers one filter; RSI/ATR compose filters with windows.
-      - _Done when:_ documented bound plus a test like the §5.3 hazard test for RSI.
+- [x] **[med] B3 — Composite convergence bounds for RSI and ATR** (§10 B3) — done 2026-11-03:
+      `pine.convergence` (§5.3), soundness by Hypothesis, exclusion tests for both.
 - [x] **[med] C1 — Lint: single-assignment tracing** (§10 C1) — done 2026-11-03
       (`pine.lint._scope`; `tracing.pine` covers traced, `var`, reassigned, shadowed-parameter
       and destructured cases with per-case confidence asserted).
@@ -674,7 +689,9 @@ results without parsing Markdown. HTML stays deferred. *Status 2026-11-03: done.
 **B3. Composite convergence.** `convergence_bars` covers a single filter. For RSI (two RMAs of
 a differenced series) and ATR (RMA of true range), the bound is the slowest internal filter's
 plus the window warm-up (+1 bar for differencing). Document and test it the way the §5.3
-hazard test does for EMA.
+hazard test does for EMA. *Status 2026-11-03: done (§5.3). Outcome differed from the sketch:
+ATR reduces exactly to a single-filter bound, while RSI needs a per-bar, data-dependent bound
+because its sensitivity scales with `1/(U′+D′)`.*
 
 ### C. Lint quality
 
