@@ -127,8 +127,9 @@ diverges first, so you fix the cause rather than its downstream effects:
 ```python
 from pine.port import Stage, check_port
 
-report = check_port(exp, script, [Stage("dbg_smooth"), Stage("dbg_trend"),
-                                  Stage("signal", kind="discrete")])
+report = check_port(
+    exp, script, [Stage("dbg_smooth"), Stage("dbg_trend"), Stage("signal", kind="discrete")]
+)
 print(report.to_markdown())  # root-cause stage, first divergence per stage, full detail
 ```
 
