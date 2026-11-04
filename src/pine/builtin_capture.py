@@ -17,6 +17,7 @@ from collections.abc import Callable
 
 import numpy as np
 
+from pine import sensitivity as sens
 from pine import ta
 from pine.bars import Bars
 from pine.io import TradingViewExport
@@ -300,12 +301,44 @@ def _anchor(v: np.ndarray, pine: np.ndarray, start: int) -> np.ndarray:
     return v + (pine[r] - v[r])
 
 
-def decide(export: TradingViewExport) -> list[GroupDecision]:
-    """For each group, the hypotheses whose columns all match the export."""
+def _input_errors(b) -> dict[str, object]:
+    """Per column: the input-rounding allowance (`pine.sensitivity`) as a float Lipschitz
+    constant or a callable ``(bars, δ)``. Running totals use the full-history bound, which
+    also bounds an anchored comparison (the anchor removes the error accumulated before it).
+    Pivots have none: they are discontinuous in their inputs."""
+    close, src = _close(b), _src_na(b)
+    vol = _volume(b)
+    return {
+        "bi_bar_index": 0.0,
+        "bi_sum": sens.sum_lipschitz(L),
+        "bi_sum_na": sens.sum_lipschitz(L),
+        "bi_wma": sens.LIPSCHITZ["wma"],
+        "bi_wma_na": sens.LIPSCHITZ["wma"],
+        "bi_hma_odd": sens.LIPSCHITZ["hma"],
+        "bi_hma_nonsquare": sens.LIPSCHITZ["hma"],
+        # The sample bound is the larger one, so it covers both hypotheses.
+        "bi_variance": lambda bb, d: sens.variance_input_error(close, L, d, biased=False),
+        "bi_variance_na": lambda bb, d: sens.variance_input_error(src, L, d, biased=False),
+        "bi_pctl": sens.LIPSCHITZ["percentile_linear_interpolation"],
+        "bi_pctl_na": sens.LIPSCHITZ["percentile_linear_interpolation"],
+        "bi_fixnan": sens.LIPSCHITZ["fixnan"],
+        "bi_cum": lambda bb, d: sens.cum_input_error(close, d),
+        "bi_cum_na": lambda bb, d: sens.cum_input_error(src, d),
+        "bi_obv": lambda bb, d: sens.obv_input_error(close, vol, d),
+        "bi_pvt": lambda bb, d: sens.pvt_input_error(close, vol, d),
+    }
+
+
+def decide(export: TradingViewExport, input_rounding: float | None = None) -> list[GroupDecision]:
+    """For each group, the hypotheses whose columns all match the export.
+
+    ``input_rounding``: half-width of the rounding of the exported OHLC (§5.1); each column's
+    tolerance then grows by its bound from `pine.sensitivity`. Pivots get no allowance."""
     k = bar_offset(export.columns, "bi_bar_index") or 0
     b = _At(export.bars, k, export.columns)
     n = len(export.bars)
     exclude = min(TRUNCATED_EXCLUDE, n) if k else 0
+    errors = _input_errors(b)
     out = []
     for group, hyps in GROUPS.items():
         ex = 0 if group == "alignment" else exclude
@@ -322,14 +355,18 @@ def decide(export: TradingViewExport) -> list[GroupDecision]:
                     mode="convergence" if ex else "aligned",
                     exclude=ex,
                     min_compared=MIN_COMPARED if ex and group not in _SPARSE else 0,
+                    input_error=errors.get(c),
                 )
                 for c, v in cols.items()
             }
-            reports[name] = check_export(export, specs)
+            rounding = None if group == "pivots" else input_rounding
+            reports[name] = check_export(export, specs, input_rounding=rounding)
         matching = tuple(h for h, r in reports.items() if r.passed)
         note = ""
         if group in ("obv", "pvt") and not np.isfinite(_volume(b)).any():
             note = "no volume on this symbol; obv/pvt are na"
+        elif group == "pivots" and input_rounding is not None:
+            note = "no input-rounding allowance: rounding can create or remove a pivot"
         elif k and group in _CUMULATIVE:
             note = "running total anchored on the export (unseen history); increments checked"
         out.append(GroupDecision(group, EXPECTED[group], matching, reports, str(ex), note))

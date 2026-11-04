@@ -132,7 +132,8 @@ def run_checks(exp, inputs_rounded: bool = False, mintick: float | None = None) 
         result["skipped"].append("semantics (tools/capture_semantics.pine not in the export)")
     if _present(exp, builtin_capture.COLUMNS):
         try:
-            result["builtins"] = builtin_capture.decide(exp)
+            delta = reference.ohlc_rounding(exp) if inputs_rounded else None
+            result["builtins"] = builtin_capture.decide(exp, input_rounding=delta)
         except ValueError as exc:
             result["errors"].append(f"builtins: {exc}")
     else:

@@ -675,6 +675,14 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         handles truncated exports (offset from `bar_index`, warm-up exclusion, `sync` for
         stateful stages, inconclusive below 100 rows). Procedure: `docs/CAPTURE.md`
         "Checking a port". **Remaining: the port manifest; a first real port through it.**
+      - _Progress 2026-11-04:_ port manifest done (`port_manifest`, `write_port_manifest`,
+        `load_port_manifest`, `verify_port_manifest`): Pine source digest (line endings and
+        trailing spaces normalised) and `//@version`, port name/version, inputs, export file
+        hash and chart settings, per-stage status, tolerance, max error and MDE. Verification
+        says when a stored acceptance stops applying (source changed, port version changed,
+        or it never passed). The manifest records a hash, never the source; stage names can
+        still describe a private indicator, so private ports keep it in their own repository.
+        **Remaining: a first real port through it.**
 - [ ] **[med] F1 — Built-in batch 1 with capture coverage** (§11 F)
       - _Raised:_ 2026-11-03
       - _Why:_ complex indicators are built from more than the 11 current built-ins.
@@ -687,6 +695,10 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         competing hypotheses for `na` handling, hma length rounding, pivot ties, percentile
         rank). **Not yet:** an export; A3 sensitivities and mutation cases for these; the rest
         of batch 1.
+      - _Progress 2026-11-04:_ A3 bounds and mutation cases done for the subset (below and
+        `tests/test_mutation_batch_f.py`, 30 cases, every one caught at the predicted bar);
+        `--inputs-rounded` now applies to the built-in capture too. **Remaining: an export;
+        the rest of batch 1.**
 - [ ] **[med] H2 — Verification registry** (§11 H2)
       - _Raised:_ 2026-11-03
       - _Why:_ "verified" must be a recorded, checkable state per built-in, not prose.
@@ -1008,6 +1020,18 @@ hypotheses are independent numpy implementations; the expected one is what `pine
 | `hma` (lengths 9 and 14) | `half_floor_sqrt_floor` | the other three floor/round combinations |
 | `pivots` (`high`/`low`, 3 left, 2 right) | `left_strict` (> left bars, ≥ right bars: a flat top marks its leftmost bar) | `right_strict`, `strict`, `weak` |
 | `fixnan`, `obv`, `pvt`, `alignment` | single | — |
+
+*Input-rounding bounds (A3), 2026-11-04* (`pine.sensitivity`, each tested for soundness by
+perturbing inputs within ±δ): `wma`, `percentile_linear_interpolation`, `fixnan` 1;
+`math.sum` `length`; `hma` 3 (`2·wma − wma` moves by ≤ 3δ, the outer wma is 1-Lipschitz);
+`variance` per bar `(2σ' + cδ)·cδ` with `c = √(n/k)`, not globally Lipschitz; `cum` `m·δ` after
+`m` values, unbounded in time; `obv` `Σ 2·volume` over bars whose port-side change is within
+`2δ` (the sign can flip there; volume assumed exact); `pvt` per term
+`v·δ(p' + |c'|)/((p' − δ)p')`. Pivots have no bound (rounding can create or remove a pivot)
+and are compared without an allowance. Practical consequence: with rounded inputs the
+running-total bounds grow with history, so long exports keep little detection power on
+`cum`/`obv`/`pvt`. The checker uses the full-history bound even for anchored (truncated)
+comparisons: valid, but wider than the true error since the anchor.
 
 Pivot ties need equal highs or lows in the export; on prices with few decimals they occur,
 otherwise the group reports "not decidable". `obv`/`pvt` use the exported volume (the script

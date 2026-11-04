@@ -150,3 +150,16 @@ def test_no_volume_is_reported(bars, cols, tmp_path):
     c["bi_pvt"] = np.full(len(bars), np.nan)
     d = {d.group: d for d in decide(_export(bars, c, tmp_path / "nv.csv"))}
     assert d["obv"].ok and "no volume" in d["obv"].note
+
+
+def test_input_rounding_allowance(bars, cols, tmp_path):
+    # Exported OHLC rounded to 1 decimal while the columns were computed on 2-decimal prices.
+    rounded = Bars(bars.ts, *(np.round(v, 1) for v in (bars.open, bars.high, bars.low,
+                   bars.close)), bars.volume, timeframe="1D")  # fmt: skip
+    exp = _export(rounded, cols, tmp_path / "r.csv")
+    plain = {d.group: d for d in decide(exp)}
+    assert not plain["wma"].ok  # rounding alone breaks exact parity
+    allowed = {d.group: d for d in decide(exp, input_rounding=0.05)}
+    for g in ("sum", "wma", "hma", "variance", "percentile", "cum", "obv", "pvt", "fixnan"):
+        assert EXPECTED[g] in allowed[g].matching, g
+    assert "no input-rounding allowance" in allowed["pivots"].note
