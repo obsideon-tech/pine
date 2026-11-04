@@ -699,11 +699,25 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         `tests/test_mutation_batch_f.py`, 30 cases, every one caught at the predicted bar);
         `--inputs-rounded` now applies to the built-in capture too. **Remaining: an export;
         the rest of batch 1.**
-- [ ] **[med] H2 — Verification registry** (§11 H2)
+- [x] **[med] H2 — Verification registry** (§11 H2)
       - _Raised:_ 2026-11-03
       - _Why:_ "verified" must be a recorded, checkable state per built-in, not prose.
       - _Done when:_ `verification.yaml` with per-built-in oracle status and matrix rows; a test
         fails if a public `ta` function lacks an entry; README table generated from it.
+      - _Progress 2026-11-04:_ **done.** `src/pine/verification.yaml` (shipped in the wheel) +
+        `pine.registry`. Records the six exports, each public `pine.ta` function (Pine name,
+        runtime method, capture script, exports that verified it and decided its `na` policy,
+        input-rounding bound, deliberate-bug test file) and every probe group of the three
+        checkers (expected hypothesis, exports that decided it). Status is derived, never
+        typed: *verified* = at least one export confirmed it. `tests/test_registry.py` fails
+        on drift in either direction (a function, runtime method or probe group without an
+        entry or vice versa; an expected hypothesis differing from the code; unknown or
+        unused exports; a bound or test file that doesn't exist or doesn't call the
+        function; a built-in without a bound and without a note saying why). The README
+        "Verification status" section is generated (`python -m pine.registry --write
+        README.md`) and CI fails if it is stale. Gaps it makes visible: no deliberate-bug
+        tests yet for `tr` (covered only via `atr`), `crossunder`, `change`, `barssince`,
+        `valuewhen`, `supertrend`, `pivotlow`.
 - [ ] **[med] G1 — Sessions and calendar** (§11 G1)
       - _Raised:_ 2026-11-03
       - _Why:_ `ta.vwap` and session-based logic reset on session boundaries.
