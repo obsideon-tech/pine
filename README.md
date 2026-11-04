@@ -133,7 +133,9 @@ report = check_port(
 print(report.to_markdown())  # root-cause stage, first divergence per stage, full detail
 ```
 
-Procedure: [`docs/CAPTURE.md`](docs/CAPTURE.md#checking-a-port). Ports of private indicators
+Procedure: [`docs/CAPTURE.md`](docs/CAPTURE.md#checking-a-port). `port_manifest` /
+`write_port_manifest` record what a port passed against (Pine source hash, inputs, export,
+per-stage result), and `verify_port_manifest` says when that record stops applying. Ports of private indicators
 belong in a private repository that depends on `pine`; nothing in this repository needs their
 source.
 

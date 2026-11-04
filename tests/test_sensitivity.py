@@ -216,3 +216,109 @@ def test_per_bar_tolerance_validation():
     t = Tolerance(atol=np.array([0.0, 1.0]), rtol=0)
     assert compare_series([1.0, 2.5], [1.0, 2.0], tolerance=t).passed
     assert not compare_series([1.5, 2.0], [1.0, 2.0], tolerance=t).passed
+
+
+# ---------- batch F (PINE_PLAN.md §11 F) ----------
+
+from pine.sensitivity import (  # noqa: E402
+    cum_input_error,
+    obv_input_error,
+    pvt_input_error,
+    sum_lipschitz,
+    variance_input_error,
+)
+
+BATCH_F = {
+    "math_sum": (ta.math_sum, lambda n: sum_lipschitz(n)),
+    "wma": (ta.wma, lambda n: LIPSCHITZ["wma"]),
+    "hma": (ta.hma, lambda n: LIPSCHITZ["hma"]),
+    "percentile": (
+        lambda x, n, na_policy=None: ta.percentile_linear_interpolation(x, n, 30, na_policy),
+        lambda n: LIPSCHITZ["percentile_linear_interpolation"],
+    ),
+}
+
+
+def _gapped(rng, n=70):
+    x = 100 + np.cumsum(rng.normal(0, 1, n))
+    x[rng.choice(n, 6, replace=False)] = np.nan
+    return x
+
+
+@settings(max_examples=examples(60), deadline=None)
+@given(
+    st.integers(0, 10_000),
+    st.integers(2, 15),
+    st.floats(1e-6, 1e-1),
+    st.sampled_from(MODES),
+    st.sampled_from(sorted(BATCH_F)),
+    st.sampled_from(ta.NA_POLICIES),
+)
+def test_batch_f_lipschitz_bounds_are_sound(seed, n, delta, mode, name, policy):
+    rng = np.random.default_rng(seed)
+    x = _gapped(rng)
+    fn, lip = BATCH_F[name]
+    y = fn(x, n, na_policy=policy)
+    y2 = fn(x + _perturb(rng, x.shape, delta, mode), n, na_policy=policy)
+    np.testing.assert_array_equal(np.isnan(y), np.isnan(y2))
+    err = np.nanmax(np.abs(y - y2), initial=0.0)
+    assert err <= lip(n) * delta * (1 + EPS) + EPS * np.nanmax(np.abs(y), initial=1.0)
+
+
+@settings(max_examples=examples(60), deadline=None)
+@given(
+    st.integers(0, 10_000),
+    st.integers(2, 15),
+    st.floats(1e-6, 1e-1),
+    st.sampled_from(MODES),
+    st.booleans(),
+    st.sampled_from(ta.NA_POLICIES),
+)
+def test_variance_bound_is_sound(seed, n, delta, mode, biased, policy):
+    rng = np.random.default_rng(seed)
+    x = _gapped(rng)
+    x2 = x + _perturb(rng, x.shape, delta, mode)  # x2: the port's (rounded) side
+    exact = ta.variance(x, n, biased, policy)
+    port = ta.variance(x2, n, biased, policy)
+    bound = variance_input_error(x2, n, delta, biased, policy)
+    ok = ~np.isnan(exact)
+    assert (np.abs(exact - port)[ok] <= bound[ok] * (1 + 1e-9) + 1e-9).all()
+
+
+@settings(max_examples=examples(60), deadline=None)
+@given(st.integers(0, 10_000), st.floats(1e-6, 0.5), st.sampled_from(MODES))
+def test_running_total_bounds_are_sound(seed, delta, mode):
+    rng = np.random.default_rng(seed)
+    n = 80
+    c = np.round(20 + np.cumsum(rng.normal(0, 0.3, n)), 1)  # coarse: flat closes occur
+    v = rng.integers(1, 1000, n).astype(float)
+    port = c + _perturb(rng, c.shape, delta, mode)
+    slack = 1e-9
+    for exact, approx, bound in [
+        (ta.cum(c), ta.cum(port), cum_input_error(port, delta)),
+        (ta.obv(c, v), ta.obv(port, v), obv_input_error(port, v, delta)),
+        (ta.pvt(c, v), ta.pvt(port, v), pvt_input_error(port, v, delta)),
+    ]:
+        ok = ~np.isnan(exact)
+        assert (np.abs(exact - approx)[ok] <= bound[ok] * (1 + slack) + slack).all()
+
+
+def test_obv_bound_is_attained_by_a_sign_flip():
+    # A flat close rounded up by δ: obv's term flips from 0 to +volume.
+    c, v = np.array([10.0, 10.0]), np.array([5.0, 7.0])
+    assert ta.obv(c + [0.0, 0.004], v)[1] - ta.obv(c, v)[1] == 7.0
+    assert obv_input_error(c, v, 0.005)[1] == 14.0
+
+
+def test_batch_f_bound_validation():
+    with pytest.raises(ValueError):
+        sum_lipschitz(0)
+    for f in (
+        lambda: variance_input_error([1.0, 2.0], 2, -1),
+        lambda: cum_input_error([1.0], -1),
+        lambda: obv_input_error([1.0], [1.0], -1),
+        lambda: pvt_input_error([1.0], [1.0], -1),
+    ):
+        with pytest.raises(ValueError, match="delta"):
+            f()
+    assert np.isinf(pvt_input_error([0.001, 1.0], [1.0, 1.0], 0.01)[1])

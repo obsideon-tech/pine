@@ -171,6 +171,29 @@ unseen start value to decay (`pine.parity.convergence_bars`), and `sync=True` co
 state machine from the row where both sides agree. The report names the **root cause**: the
 stage that diverges earliest. Fix that one first.
 
+When it passes, record what it passed against, in the port's own repository:
+
+```python
+from pine.port import port_manifest, verify_port_manifest, write_port_manifest
+
+report = check_port(exp, script, stages)
+m = port_manifest(
+    report,
+    pine_source=Path("debug_copy.pine"),
+    port="my_port",
+    port_version="1.0",
+    export="my_export.csv",
+    inputs={"length": 14},
+)
+write_port_manifest("my_port.port.yaml", m)
+```
+
+The manifest holds a hash of the Pine source, not the source. Later,
+`verify_port_manifest(load_port_manifest(...), Path("debug_copy.pine"), "1.0")` returns the
+reasons the acceptance no longer applies (source edited, port version changed), or nothing.
+Stage names and inputs can still describe your indicator, so keep the manifest private with
+the port.
+
 If the indicator imports a TradingView library, the port needs that library's source too:
 `check_port` can only compare what the port computes.
 

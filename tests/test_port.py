@@ -150,3 +150,91 @@ def test_discrete_excuse_combined_with_warmup(tmp_path):
     assert check_port(exp, wrong_signal, st).passed
     st = [Stage("signal", kind="discrete")]
     assert check_port(exp, wrong_signal, st).first_divergence["signal"] == 500
+
+
+# ---------- port manifest (H1 step 5) ----------
+
+from pine.manifest import validate_manifest  # noqa: E402
+from pine.port import (  # noqa: E402
+    load_port_manifest,
+    port_manifest,
+    source_digest,
+    verify_port_manifest,
+    write_port_manifest,
+)
+
+PINE = '//@version=6\nindicator("demo")\nplot(ta.sma(close, 10), "dbg_smooth")\n'
+
+
+def test_source_digest_ignores_line_endings_and_trailing_space():
+    assert source_digest(PINE) == source_digest(PINE.replace("\n", "\r\n"))
+    assert source_digest(PINE) == source_digest(PINE.replace(")\n", ")   \n") + "\n\n")
+    assert source_digest(PINE) != source_digest(PINE.replace("10", "11"))
+
+
+def test_manifest_round_trip_and_verification(tmp_path):
+    exp = _export(tmp_path)
+    rep = check_port(exp, make_script(), STAGES)
+    src = tmp_path / "demo.pine"
+    src.write_text(PINE)
+    em = validate_manifest(
+        {
+            "source": "tradingview_export",
+            "symbol_class": "public",
+            "symbol": "EX:DEMO",
+            "timeframe": "1D",
+            "session": "regular",
+            "timezone": "UTC",
+            "adjustment": "none",
+            "chart_type": "candles",
+            "pine_version": 6,
+            "export_date": "2026-11-04",
+            "timestamp_convention": "bar_open",
+            "displayed_precision": 6,
+            "indicator": None,
+        }  # fmt: skip
+    )
+    m = port_manifest(
+        rep, pine_source=src, port="demo", port_version="1.0", export=tmp_path / "x.csv",
+        export_manifest=em, inputs={"length": 10}, notes="synthetic",
+    )  # fmt: skip
+    assert m["pine"]["version"] == 6 and m["pine"]["sha256"] == source_digest(PINE)
+    assert m["export"]["file"] == "x.csv" and len(m["export"]["sha256"]) == 64
+    assert m["export"]["symbol"] == "EX:DEMO" and m["export"]["offset"] == 0
+    assert m["result"] == {"passed": True, "root_cause": None, "first_failing_stage": None}
+    kinds = {s["column"]: s["kind"] for s in m["stages"]}
+    assert kinds == {"dbg_smooth": "unbounded", "dbg_trend": "unbounded",
+                     "signal": "discrete", "state": "unbounded"}  # fmt: skip
+    assert "plot(ta.sma" not in str(m)  # the source itself is never recorded
+
+    path = write_port_manifest(tmp_path / "demo.port.yaml", m)
+    with pytest.raises(FileExistsError):
+        write_port_manifest(path, m)
+    write_port_manifest(path, m, force=True)
+    loaded = load_port_manifest(path)
+    assert loaded["stages"] == m["stages"]
+    assert verify_port_manifest(loaded, src, "1.0") == []
+    problems = verify_port_manifest(loaded, PINE.replace("10", "12"), "1.1")
+    assert len(problems) == 2 and "source differs" in problems[0]
+
+
+def test_manifest_records_failure(tmp_path):
+    exp = _export(tmp_path)
+    rep = check_port(exp, make_script(flip_bug_at=300), STAGES)
+    m = port_manifest(rep, pine_source=PINE, port="demo", port_version="0.1")
+    assert m["result"]["root_cause"] == "dbg_trend"
+    assert "export" in m and "file" not in m["export"]
+    assert verify_port_manifest(m, PINE) == ["the recorded check did not pass"]
+
+
+@pytest.mark.parametrize(
+    "content, msg",
+    [("[1, 2]", "not a mapping"), ("schema: 1\n", "missing"),
+     ("{schema: 2, port: 1, pine: 1, inputs: 1, export: 1, result: 1, stages: 1, date: 1}",
+      "schema 2")],
+)  # fmt: skip
+def test_load_port_manifest_rejects_bad_files(tmp_path, content, msg):
+    p = tmp_path / "bad.yaml"
+    p.write_text(content)
+    with pytest.raises(ValueError, match=msg):
+        load_port_manifest(p)

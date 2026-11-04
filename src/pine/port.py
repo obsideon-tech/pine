@@ -27,18 +27,33 @@ for stateful stages (``sync=True``), from the observed synchronisation row
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import datetime as dt
+import hashlib
+import math
+import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 import numpy as np
+import yaml
 
 from pine.io import TradingViewExport
 from pine.parity import Kind, ParityReport, PortSpec, Tolerance, check_export, tolerance_for
 from pine.runtime import Context, RunResult, run
 from pine.truncation import bar_offset, sync_point
 
-__all__ = ["PortReport", "Stage", "check_port"]
+__all__ = [
+    "PortReport",
+    "Stage",
+    "check_port",
+    "port_manifest",
+    "write_port_manifest",
+    "load_port_manifest",
+    "source_digest",
+    "verify_port_manifest",
+]
 
 
 @dataclass(frozen=True)
@@ -218,3 +233,171 @@ def _mask_warmup(excuse: Callable | None, exclude: int) -> Callable | None:
         return m
 
     return f
+
+
+# ---------------------------------------------------------------------------- port manifest
+# H1 step 5: a record of what a port was accepted against. It holds a *hash* of the Pine
+# source, never the source, but stage names and inputs can still describe a private
+# indicator: keep manifests of private ports in the private repository with the port.
+
+MANIFEST_SCHEMA = 1
+
+
+def _text(source: str | Path) -> str:
+    if isinstance(source, Path):
+        return source.read_text(encoding="utf-8")
+    return source
+
+
+def source_digest(source: str | Path) -> str:
+    """SHA-256 of a Pine source (text, or a `Path` to read), with line endings normalised to
+    ``\\n`` and trailing whitespace removed from each line, so copying the script out of the
+    Pine Editor on another platform does not change it."""
+    text = _text(source).replace("\r\n", "\n").replace("\r", "\n")
+    norm = "\n".join(line.rstrip() for line in text.split("\n")).strip("\n")
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
+def _pine_version(text: str) -> int | None:
+    m = re.search(r"//@version=(\d+)", text)
+    return int(m.group(1)) if m else None
+
+
+def _num(x) -> Any:
+    if x is None:
+        return None
+    if isinstance(x, (np.integer, int)):
+        return int(x)
+    x = float(x)
+    return None if math.isinf(x) or math.isnan(x) else x
+
+
+def port_manifest(
+    report: PortReport,
+    *,
+    pine_source: str | Path,
+    port: str,
+    port_version: str,
+    export: str | Path | None = None,
+    export_manifest=None,
+    inputs: Mapping[str, Any] | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Manifest of one `check_port` run (PINE_PLAN.md §11 H1 step 5), as a plain dict.
+
+    ``pine_source``: the script the export was made with (text or `Path`); only its digest and
+    ``//@version`` are recorded. ``export``: the CSV path (its name, size and SHA-256 are
+    recorded, not its contents). ``export_manifest``: a `pine.manifest.Manifest` for the
+    export, whose chart settings are copied. ``inputs``: the script's input values."""
+    from pine import __version__
+
+    text = _text(pine_source)
+    cols = {c.name: c for c in report.parity.columns}
+    disc = {d.name: d for d in report.parity.discrete}
+    stages = []
+    for name in report.stages:
+        entry: dict[str, Any] = {
+            "column": name,
+            "status": report.status[name],
+            "compared_from": report.compared_from[name],
+            "first_divergence": report.first_divergence[name],
+        }
+        if name in cols:
+            c = cols[name]
+            atol = c.tolerance.atol
+            entry |= {
+                "kind": c.kind,
+                "mode": c.mode,
+                "n_compared": c.n_compared,
+                "atol": _num(np.max(atol)) if np.ndim(atol) else _num(atol),
+                "rtol": _num(c.tolerance.rtol),
+                "max_abs_err": _num(c.max_abs_err),
+                "mde_offset": _num(c.mde_offset),
+                "mde_seed": _num(c.mde_seed),
+            }
+        else:
+            d = disc[name]
+            entry |= {
+                "kind": "discrete",
+                "n_compared": d.n_bars,
+                "mismatches": d.mismatches,
+                "excused": d.excused,
+            }
+        stages.append(entry)
+    exp_info: dict[str, Any] = {
+        "offset": report.offset,
+        "rows": len(report.run.bars) if report.run else None,
+    }
+    if export is not None:
+        path = Path(export)
+        data = path.read_bytes()
+        exp_info |= {
+            "file": path.name,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    if export_manifest is not None:
+        exp_info |= {
+            k: getattr(export_manifest, k)
+            for k in ("symbol", "timeframe", "timezone", "session", "adjustment")
+        }
+    return {
+        "schema": MANIFEST_SCHEMA,
+        "port": {"name": port, "version": port_version},
+        "pine": {"sha256": source_digest(text), "version": _pine_version(text)},
+        "inputs": dict(inputs or {}),
+        "export": exp_info,
+        "result": {
+            "passed": report.passed,
+            "root_cause": report.root_cause,
+            "first_failing_stage": report.first_failing_stage,
+        },
+        "stages": stages,
+        "checked_with": {"pine_parity": __version__},
+        "date": dt.date.today().isoformat(),
+        **({"notes": notes} if notes else {}),
+    }
+
+
+def write_port_manifest(path: str | Path, manifest: Mapping[str, Any], force: bool = False) -> Path:
+    """Write a manifest as YAML; refuses to overwrite unless ``force``."""
+    path = Path(path)
+    if path.exists() and not force:
+        raise FileExistsError(f"{path} exists; pass force=True to overwrite")
+    with path.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(dict(manifest), fh, sort_keys=False)
+    return path
+
+
+_REQUIRED = ("schema", "port", "pine", "inputs", "export", "result", "stages", "date")
+
+
+def load_port_manifest(path: str | Path) -> dict[str, Any]:
+    with Path(path).open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: not a mapping")
+    missing = [k for k in _REQUIRED if k not in data]
+    if missing:
+        raise ValueError(f"{path}: missing {missing}")
+    if data["schema"] != MANIFEST_SCHEMA:
+        raise ValueError(f"{path}: schema {data['schema']!r}, expected {MANIFEST_SCHEMA}")
+    return data
+
+
+def verify_port_manifest(
+    manifest: Mapping[str, Any], pine_source: str | Path, port_version: str | None = None
+) -> list[str]:
+    """Problems that make a stored acceptance no longer apply (empty list: still applies):
+    the Pine source changed, the port version changed, or the acceptance did not pass."""
+    problems = []
+    if manifest["pine"]["sha256"] != source_digest(pine_source):
+        problems.append("Pine source differs from the one the port was checked against")
+    if port_version is not None and manifest["port"]["version"] != port_version:
+        problems.append(
+            f"port version {port_version!r} was not checked "
+            f"(manifest: {manifest['port']['version']!r})"
+        )
+    if not manifest["result"]["passed"]:
+        problems.append("the recorded check did not pass")
+    return problems
