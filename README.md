@@ -152,21 +152,21 @@ Exports: `nflx_1d` BATS:NFLX 1D (from bar 3116); `nflx_1w` BATS:NFLX 1W (from ba
 | `ta.stdev` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | yes | yes |
 | `ta.highest` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | yes | yes |
 | `ta.lowest` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | yes | yes |
-| `ta.tr` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | yes | — |
+| `ta.tr` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | yes | yes |
 | `ta.atr` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | yes | yes |
 | `ta.crossover` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
-| `ta.crossunder` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | — |
-| `ta.change` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | — |
-| `ta.barssince` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | — |
-| `ta.valuewhen` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | — |
-| `ta.supertrend` | — | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | — |
+| `ta.crossunder` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
+| `ta.change` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
+| `ta.barssince` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
+| `ta.valuewhen` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
+| `ta.supertrend` | — | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
 | `math.sum` | yes | capture ready | — | yes | yes |
 | `ta.wma` | yes | capture ready | — | yes | yes |
 | `ta.hma` | yes | capture ready | — | yes | yes |
 | `ta.variance` | yes | capture ready | — | yes | yes |
 | `ta.percentile_linear_interpolation` | yes | capture ready | — | yes | yes |
 | `ta.pivothigh` | yes | capture ready | — | none | yes |
-| `ta.pivotlow` | yes | capture ready | — | none | — |
+| `ta.pivotlow` | yes | capture ready | — | none | yes |
 | `fixnan` | yes | capture ready | — | yes | yes |
 | `ta.cum` | yes | capture ready | — | yes | yes |
 | `ta.obv` | yes | capture ready | — | yes | yes |
