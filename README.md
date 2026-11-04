@@ -10,6 +10,12 @@ real exports**, including seeding; `change`, `barssince`, `valuewhen` and `super
 through the semantics capture. Anything else is checked only against closed-form and property
 tests so far. See [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results).
 
+New and **not yet checked against TradingView** (capture script ready,
+`tools/capture_builtins.pine`): `math.sum`, `ta.wma`, `hma`, `variance`,
+`percentile_linear_interpolation`, `pivothigh`, `pivotlow`, `fixnan`, `cum`, `obv`, `pvt`;
+calls inside `for` loops (`ctx.loop`); and `pine.port.check_port`, which checks a whole port
+stage by stage.
+
 ```bash
 uv sync
 ```
@@ -62,14 +68,16 @@ be proven (`possible`). Rules and their known blind spots are in
 `pine.strategy` emulates TradingView's backtest engine for ports written on `pine.runtime`
 (`run(script, bars, strategy=StrategyConfig())`, then `ctx.strategy.entry/close/exit` and
 `position_size`, `netprofit`, `equity`, …). First increment: market orders, reversals and
-stop/limit brackets with TradingView's intrabar path assumption; checked against TradingView by
-`tools/capture_strategy.pine` (pending an export). Plan: [`PINE_PLAN.md` §13](PINE_PLAN.md#13-strategy-parity-strategy).
+stop/limit brackets with TradingView's intrabar path assumption and tick rounding, **verified
+bar for bar against TradingView** on a 2 678-bar DOGE backtest (`tools/capture_strategy.pine`);
+gap fills still to observe. Plan: [`PINE_PLAN.md` §13](PINE_PLAN.md#13-strategy-parity-strategy).
 
 ### Run the TradingView capture
 
-This is the step that turns "unverified" into "verified". Put `tools/reference_capture.pine`
-and `tools/capture_semantics.pine` on one chart, export the chart data, then run (with your
-own file name and chart settings):
+This is the step that turns "unverified" into "verified". Put `tools/reference_capture.pine`,
+`tools/capture_semantics.pine` and `tools/capture_builtins.pine` (plus
+`tools/capture_strategy.pine` for the backtest engine) on one chart, export the chart data,
+then run (with your own file name and chart settings):
 
 ```bash
 uv run python -m pine.capture manifest ~/Downloads/aapl_1d.csv --symbol NASDAQ:AAPL --timeframe 1D --timezone America/New_York
@@ -106,7 +114,28 @@ result = run(script, exp.bars)
 ```
 
 The semantics `pine.runtime` assumes are checked by the second capture script (see
-[`docs/CAPTURE.md`](docs/CAPTURE.md)).
+[`docs/CAPTURE.md`](docs/CAPTURE.md)). Loops: `for i in ctx.loop("k", range(1, 4)):`; each
+call site in the body keeps one state across iterations (the expected Pine behaviour, probed
+by the semantics capture).
+
+### Checking a port
+
+Add debug plots of the intermediate series to a copy of the Pine script, export, and compare
+each stage with the same-named `ctx.plot` of the port. The report names the stage that
+diverges first, so you fix the cause rather than its downstream effects:
+
+```python
+from pine.port import Stage, check_port
+
+report = check_port(
+    exp, script, [Stage("dbg_smooth"), Stage("dbg_trend"), Stage("signal", kind="discrete")]
+)
+print(report.to_markdown())  # root-cause stage, first divergence per stage, full detail
+```
+
+Procedure: [`docs/CAPTURE.md`](docs/CAPTURE.md#checking-a-port). Ports of private indicators
+belong in a private repository that depends on `pine`; nothing in this repository needs their
+source.
 
 Distribution name `pine-parity`, import name `pine`. Every fixture CSV needs a sibling YAML
 manifest describing how it was produced; see `src/pine/manifest.py`.
@@ -117,8 +146,9 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
   AAPL 60; see [`PINE_PLAN.md` §12](PINE_PLAN.md#12-evidence-log-external-results)): the
   eleven core built-ins including seeding, across price scales from ~0.1 to > 10 000, daily,
   weekly and hourly bars; `na` handling; the runtime's execution model and scalar rules; the
-  three reference ports. Not yet: the strategy emulator, built-ins outside the core eleven,
-  sessions as a feature, `request.security`.
+  three reference ports; the strategy emulator's first increment (DOGE 1D). Not yet: gap
+  fills in the strategy emulator, the batch-F built-ins and loop semantics (capture ready),
+  other built-ins, sessions as a feature, `request.security`.
 - **`na` inside windows** follows the observed behaviour by default: `sma`, `stdev`,
   `highest`, `lowest` skip `na`; `ema`, `rma`, `rsi` carry state across `na` and output `na`
   on the `na` bar (`pine.ta.DEFAULT_NA_POLICY`; override with `na_policy=`). Observed on one

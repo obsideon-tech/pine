@@ -273,3 +273,225 @@ class Valuewhen:
             if len(self.hits) > self.occ + 1:
                 del self.hits[0]
         return self.hits[-1 - self.occ] if len(self.hits) > self.occ else NAN
+
+
+# ---------------------------------------------------------------------------- batch F
+# The built-ins below are defined once, here, as incremental objects; the vectorised
+# `pine.ta` functions of the same name stream them over an array, so the two agree bit for bit
+# by construction. Their TradingView behaviour is checked by ``tools/capture_builtins.pine``
+# (`pine.builtin_capture`); until an export is checked each is **unverified**.
+
+
+class _Windowed:
+    """Window of the last ``length`` values under an ``na`` policy; subclasses reduce it.
+
+    ``propagate``: any `na` in the window gives `na`. ``skip``/``skip_na_out``: the window
+    holds the last ``length`` valid values (see `_ValidWindow`)."""
+
+    def __init__(self, length: int, policy: str):
+        self.policy = _check(policy)
+        self.n = length
+        self.w = _Window(length)
+        self.vw = None if policy == "propagate" else _ValidWindow(length, policy)
+
+    def _window(self, x: float) -> list[float] | None:
+        if self.vw is not None:
+            return self.vw.w.h if self.vw.push(x) else None
+        self.w.push(x)
+        if not self.w.full or any(math.isnan(v) for v in self.w.h):
+            return None
+        return self.w.h
+
+    def update(self, x) -> float:
+        h = self._window(_f(x))
+        return NAN if h is None else self._reduce(h)
+
+
+class Sum(_Windowed):
+    """``math.sum(source, length)``: newest value first, as `Sma` without the division."""
+
+    def _reduce(self, h: list[float]) -> float:
+        s = 0.0
+        for v in reversed(h):
+            s += v
+        return s
+
+
+class Wma(_Windowed):
+    """``ta.wma``. Manual's code::
+
+    norm = 0.0, sum = 0.0
+    for i = 0 to y - 1
+        weight = (y - i) * y
+        norm := norm + weight
+        sum := sum + x[i] * weight
+    sum / norm
+    """
+
+    def _reduce(self, h: list[float]) -> float:
+        n = self.n
+        norm = s = 0.0
+        for i, v in enumerate(reversed(h)):
+            weight = float((n - i) * n)
+            norm += weight
+            s += v * weight
+        return s / norm
+
+
+class Hma:
+    """``ta.hma``: ``wma(2 * wma(src, length / 2) - wma(src, length), floor(sqrt(length)))``
+    with ``length / 2`` truncated to an int (**unverified**; the capture probes floor vs
+    round for both lengths)."""
+
+    def __init__(self, length: int, policy: str = "skip"):
+        if length < 2:
+            raise ValueError("hma length must be >= 2")
+        self.half = Wma(length // 2, policy)
+        self.full = Wma(length, policy)
+        self.outer = Wma(max(1, math.floor(math.sqrt(length))), policy)
+
+    def update(self, x) -> float:
+        x = _f(x)
+        return self.outer.update(2.0 * self.half.update(x) - self.full.update(x))
+
+
+class Variance(_Windowed):
+    """``ta.variance(source, length, biased)``: `Stdev` without the square root."""
+
+    def __init__(self, length: int, biased: bool = True, policy: str = "skip"):
+        super().__init__(length, policy)
+        self.sma = Sma(length, policy)
+        self.denom = length if biased else length - 1
+
+    def update(self, x) -> float:
+        x = _f(x)
+        avg = self.sma.update(x)
+        h = self._window(x)
+        if h is None or math.isnan(avg):
+            return NAN
+        ss = 0.0
+        for v in reversed(h):
+            d = v - avg
+            if abs(d) <= 1e-10:
+                d = 0.0
+            ss += d * d
+        return ss / self.denom
+
+
+class PercentileLinear(_Windowed):
+    """``ta.percentile_linear_interpolation(source, length, percentage)``: linear interpolation
+    between the sorted window values at rank ``p/100 * (n - 1)`` (numpy's default, Excel's
+    PERCENTILE.INC; **unverified**: the capture also tests the ``(n + 1)p`` and Hazen ranks)."""
+
+    def __init__(self, length: int, percentage: float, policy: str = "skip"):
+        if not 0 <= percentage <= 100:
+            raise ValueError("percentage must be in [0, 100]")
+        super().__init__(length, policy)
+        self.p = percentage
+
+    def _reduce(self, h: list[float]) -> float:
+        s = sorted(h)
+        r = self.p / 100.0 * (len(s) - 1)
+        lo = math.floor(r)
+        hi = min(lo + 1, len(s) - 1)
+        return s[lo] + (r - lo) * (s[hi] - s[lo])
+
+
+class _Pivot:
+    """``ta.pivothigh/pivotlow(source, leftbars, rightbars)``: on the bar ``rightbars`` after a
+    pivot, the pivot's value; otherwise `na`. Tie rule (**unverified**, probed): strictly
+    beyond every left bar, at least as extreme as every right bar, so a flat top marks its
+    leftmost bar. Any `na` in the window gives `na`."""
+
+    sign = 1.0
+
+    def __init__(self, left: int, right: int):
+        if left < 1 or right < 1:
+            raise ValueError("leftbars and rightbars must be >= 1")
+        self.left, self.right = left, right
+        self.w = _Window(left + right + 1)
+
+    def update(self, x) -> float:
+        self.w.push(_f(x))
+        if not self.w.full:
+            return NAN
+        h = [self.sign * v for v in self.w.h]
+        if any(math.isnan(v) for v in h):
+            return NAN
+        c = h[self.left]
+        if all(c > v for v in h[: self.left]) and all(c >= v for v in h[self.left + 1 :]):
+            return self.w.h[self.left]
+        return NAN
+
+
+class Pivothigh(_Pivot):
+    sign = 1.0
+
+
+class Pivotlow(_Pivot):
+    sign = -1.0
+
+
+class Fixnan:
+    """``fixnan(source)``: the last non-`na` value (`na` before the first)."""
+
+    def __init__(self):
+        self.last = NAN
+
+    def update(self, x) -> float:
+        x = _f(x)
+        if not math.isnan(x):
+            self.last = x
+        return self.last
+
+
+class Cum:
+    """``ta.cum(source)``: running total. `na` handling per policy (**unverified**):
+    ``skip`` (default) ignores `na` (the total so far is returned on an `na` bar; `na` before
+    the first value), ``skip_na_out`` returns `na` on `na` bars, ``propagate`` stays `na`
+    from the first `na` on."""
+
+    def __init__(self, policy: str = "skip"):
+        self.policy = _check(policy)
+        self.total = NAN
+        self.dead = False
+
+    def update(self, x) -> float:
+        x = _f(x)
+        if math.isnan(x):
+            if self.policy == "propagate":
+                self.dead = True
+            return NAN if self.policy != "skip" or self.dead else self.total
+        if self.dead:
+            return NAN
+        self.total = x if math.isnan(self.total) else self.total + x
+        return self.total
+
+
+class Obv:
+    """``ta.obv``: ``ta.cum(math.sign(ta.change(close)) * volume)``."""
+
+    def __init__(self, policy: str = "skip"):
+        self.cum = Cum(policy)
+        self.prev = NAN
+
+    def update(self, close, volume) -> float:
+        c = _f(close)
+        ch = c - self.prev
+        self.prev = c
+        sign = NAN if math.isnan(ch) else float((ch > 0) - (ch < 0))
+        return self.cum.update(sign * _f(volume))
+
+
+class Pvt:
+    """``ta.pvt``: ``ta.cum(ta.change(close) / close[1] * volume)``."""
+
+    def __init__(self, policy: str = "skip"):
+        self.cum = Cum(policy)
+        self.prev = NAN
+
+    def update(self, close, volume) -> float:
+        c = _f(close)
+        v = (c - self.prev) / self.prev * _f(volume)
+        self.prev = c
+        return self.cum.update(v)

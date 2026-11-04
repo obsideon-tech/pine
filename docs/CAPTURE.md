@@ -1,8 +1,8 @@
 # Running the TradingView capture
 
 This is the step that turns `pine`'s checks from "consistent with itself" into "matches
-TradingView". You put two scripts on one chart, export the chart data once, and run two
-commands. It takes about ten minutes. Background: `PINE_PLAN.md` §10 A1/A2 and §11 E1.
+TradingView". You put the capture scripts on one chart, export the chart data once, and run
+two commands. It takes about ten minutes. Background: `PINE_PLAN.md` §10 A1/A2, §11 E1/F, §13.
 
 You need:
 
@@ -31,16 +31,18 @@ chart, and whether **extended hours** are shown. You'll pass both in step 5.
 
 ## 2. Add the scripts
 
-For each of `tools/reference_capture.pine`, `tools/capture_semantics.pine` and
-`tools/capture_strategy.pine` (the strategy one is optional; it checks the backtest engine
-emulation, `PINE_PLAN.md` §13):
+For each of `tools/reference_capture.pine`, `tools/capture_semantics.pine`,
+`tools/capture_builtins.pine` (the batch-F built-ins: `wma`, `hma`, pivots, `math.sum`, …) and
+`tools/capture_strategy.pine` (the backtest engine, `PINE_PLAN.md` §13; strategies are added
+with **Open → New strategy**, or by pasting into a new script, since the file starts with
+`strategy(...)`):
 
 1. Open the **Pine Editor** (bottom panel of the chart).
 2. Create a new indicator (**Open → New indicator**, or the "+" / new-script button).
 3. Replace the editor's contents with the whole file from this repository.
 4. **Save** it under any name, then click **Add to chart**.
 
-Both scripts appear in panes below the price chart. The semantics script shows a compiler
+The scripts appear in panes below the price chart. The semantics script shows a compiler
 **warning** that some `ta.*` calls are not executed on every bar. That is intended: it is one
 of the behaviours being measured. A compiler **error** is not intended; copy its message and
 send it to me, because it means my Pine code needs fixing.
@@ -134,8 +136,43 @@ report. Things to know:
 | Strategy section says "Tick size unknown" | The export lacks `strat_mintick` (older capture script). Pass the symbol's tick, e.g. `--mintick 0.00001` for BINANCE:DOGEUSDT, to `check` (or `manifest`). TradingView rounds strategy fill prices to that tick. |
 | Report says "Last row dropped" in the strategy section | The last bar was live; strategies calculate only on bar close, so their columns are empty there. Handled automatically. |
 | `strat_bar_index: …` under "Could not run" | The strategy script's bar-number column has `na` or gaps (the message names the first row). Usually the strategy wasn't calculated on every bar (e.g. it errored or was added after a partial load). Remove and re-add the strategy, let the chart finish loading, re-export. The other checks still ran. |
+| Semantics rows `loop_builtin` / `loop_userfn` say **runtime must change** | A real finding about calls inside `for` loops: send the report; `ctx.loop` gets changed to the matching hypothesis. |
+| Built-ins row `pivots` says "not decidable" | No equal highs or lows in this export, so the tie rule can't be seen. Normal on prices with many decimals; a stock on 1D usually has ties. |
+| Built-ins rows `obv` / `pvt` note "no volume" | The symbol has no volume (some indices, FX). Those rows can't be checked on it. |
 | `bar_index column is not consecutive` | Rows are missing or reordered in the CSV. Re-export without editing the file. |
 | `timeframe '1h' is not a Pine timeframe string` | Use Pine spelling: `60` rather than `1h`, `1D` rather than `D1`. |
+
+## Checking a port
+
+To check a port of your own indicator (`PINE_PLAN.md` §11 H1), the TradingView side needs
+the intermediate values too, not only the final lines:
+
+1. Copy the indicator in the Pine Editor (**Save as**). Work on the copy.
+2. Add `plot(bar_index, "bar_index")` and one plot per intermediate value you want checked,
+   with short unique titles, e.g. `plot(smoothed, "dbg_smoothed")`. Plots in `if` blocks are
+   not allowed in Pine; assign to a variable and plot that. Labels, lines and fills are not
+   exported; plot the numbers they are drawn from instead. Pine allows 64 plots per script;
+   split across two copies if needed.
+3. Export as in steps 3–4, and keep the CSV outside this repository.
+4. In the port, `ctx.plot` the same names, then:
+
+```python
+from pine.io import load_tradingview_csv
+from pine.port import Stage, check_port
+
+exp = load_tradingview_csv("my_export.csv", timeframe="1D", session_tz="America/New_York")
+stages = [Stage("dbg_smoothed", exclude=20), Stage("dbg_signal", kind="discrete")]
+print(check_port(exp, script, stages).to_markdown())
+```
+
+List stages in pipeline order (inputs first). `exclude` skips warm-up rows; in an export that
+starts part-way through history, recursive filters (EMA-like) need enough rows for their
+unseen start value to decay (`pine.parity.convergence_bars`), and `sync=True` compares a
+state machine from the row where both sides agree. The report names the **root cause**: the
+stage that diverges earliest. Fix that one first.
+
+If the indicator imports a TradingView library, the port needs that library's source too:
+`check_port` can only compare what the port computes.
 
 ## More rows
 
@@ -144,6 +181,21 @@ charts. Done so far: NFLX daily (opening gaps, DST, long history) and NFLX weekl
 Remaining rows, with exact commands. In TradingView, switch the chart's symbol and timeframe
 (the scripts stay on the chart), export, then run the three commands. `ls -t … | head -1`
 picks the newest export matching the symbol, whatever suffix TradingView adds.
+
+**Strategy on a stock: `BATS:NFLX`, daily** (decides how stop/limit orders fill across
+opening gaps, which the crypto export could not show). All four scripts on the chart:
+
+```bash
+F=$(ls -t ~/Sync/obsideon/vault/pine_test/BATS_NFLX*1D*.csv | head -1); echo "$F"
+```
+
+```bash
+uv run python -m pine.capture manifest "$F" --symbol BATS:NFLX --timeframe 1D --timezone America/New_York --mintick 0.01 --force
+```
+
+```bash
+uv run python -m pine.capture check "$F" --out ~/Sync/obsideon/vault/pine_test/nflx_1d_report.md
+```
 
 **Price below 1: `BINANCE:DOGEUSDT`, daily** (crypto: UTC, no adjustment)
 

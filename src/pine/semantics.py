@@ -62,6 +62,8 @@ CONSTANTS: dict[str, float] = {
     "ST_FACTOR": 3.0,
     "TRAIL_ATR": 14,
     "TRAIL_MULT": 2.0,
+    "LOOP_N": 3,
+    "LOOP_LEN": 2,
 }
 K = CONSTANTS
 Hyp = Callable[[Bars], dict[str, np.ndarray]]
@@ -225,6 +227,69 @@ def _st(b: Bars) -> dict[str, np.ndarray]:
     return {"supertrend": line, "supertrend_dir": d}
 
 
+def _loop_streams(b, hyp: str) -> dict[str, np.ndarray]:
+    """The loop probes under one hypothesis about a call site executed ``N`` times per bar
+    (iterations ``i = 1..N``, inputs ``close * i`` and ``(close, p = i)``):
+
+    - ``per_call``: one state for the site, advanced by every call; history is the sequence
+      of calls (the previous call is the previous iteration, or the last one of the bar
+      before).
+    - ``per_bar_last``: one state, but history keeps one value per bar, the bar's last call.
+    - ``per_iteration``: as if the loop were unrolled into ``N`` separate call sites.
+    """
+    n, L = int(K["LOOP_N"]), int(K["LOOP_LEN"])
+    c = np.asarray(b.close, dtype=float)
+    T = c.size
+    it = np.arange(1, n + 1, dtype=float)
+    x = c[:, None] * it[None, :]  # x[t, i-1] = close[t] * i
+    out = {k: np.full(T, np.nan) for k in ("sum_first", "sum_last", "fn_first", "fn_last", "lag")}
+    if hyp == "per_call":
+        flat = x.reshape(-1)  # calls in execution order
+        closes = np.repeat(c, n)
+        for t in range(T):
+            for j, key_s, key_f in ((0, "sum_first", "fn_first"), (n - 1, "sum_last", "fn_last")):
+                k = t * n + j
+                if k >= L - 1:
+                    out[key_s][t] = sum(flat[k - m] for m in range(L))
+                if k >= 1:
+                    out[key_f][t] = flat[k] - flat[k - 1]
+            k = t * n + n - 1
+            if k - n >= 0:
+                out["lag"][t] = closes[k] - closes[k - n]
+    elif hyp == "per_bar_last":
+        for t in range(T):
+            prev = [x[t - m, n - 1] for m in range(1, L)] if t >= L - 1 else None
+            for j, key_s, key_f in ((0, "sum_first", "fn_first"), (n - 1, "sum_last", "fn_last")):
+                if prev is not None:
+                    out[key_s][t] = x[t, j] + sum(prev)
+                if t >= 1:
+                    out[key_f][t] = x[t, j] - x[t - 1, n - 1]
+            if t >= n:
+                out["lag"][t] = c[t] - c[t - n]
+    else:  # per_iteration
+        for t in range(T):
+            for j, key_s, key_f in ((0, "sum_first", "fn_first"), (n - 1, "sum_last", "fn_last")):
+                if t >= L - 1:
+                    out[key_s][t] = sum(x[t - m, j] for m in range(L))
+                if t >= 1:
+                    out[key_f][t] = x[t, j] - x[t - 1, j]
+            if t >= n:
+                out["lag"][t] = c[t] - c[t - n]
+    return out
+
+
+def _loop_group(kind: str) -> dict[str, Hyp]:
+    names = (
+        {"loop_sum_first": "sum_first", "loop_sum_last": "sum_last"}
+        if kind == "builtin"
+        else {"loop_fn_first": "fn_first", "loop_fn_last": "fn_last", "loop_fn_lag": "lag"}
+    )
+    return {
+        h: (lambda b, h=h: {col: _loop_streams(b, h)[k] for col, k in names.items()})
+        for h in ("per_call", "per_bar_last", "per_iteration")
+    }
+
+
 def _cols(**fns) -> Hyp:
     return lambda b: {c: f(b) for c, f in fns.items()}
 
@@ -316,6 +381,8 @@ GROUPS: dict[str, dict[str, Hyp]] = {
         "per_call": lambda b: _regime_loop(b, per_call=True),
         "every_bar": lambda b: _regime_loop(b, per_call=False),
     },
+    "loop_builtin": _loop_group("builtin"),
+    "loop_userfn": _loop_group("userfn"),
 }
 
 EXPECTED: dict[str, str] = {
@@ -339,6 +406,10 @@ EXPECTED: dict[str, str] = {
     "supertrend": "manual_code",
     "trail_stop": "port",
     "regime": "per_call",
+    # Expected by extension of the observed per-call rule for conditional calls (§12);
+    # **unverified** until an export with the loop probes is checked.
+    "loop_builtin": "per_call",
+    "loop_userfn": "per_call",
 }
 
 COLUMNS: tuple[str, ...] = (
@@ -346,7 +417,8 @@ COLUMNS: tuple[str, ...] = (
     "site_b_diff", "var_acc", "varip_acc", "branch_hist", "round_pos_half", "round_neg_half",
     "round_odd_half", "mod_neg", "div_int_series", "div_int_const", "int_trunc", "na_eq_na",
     "barssince", "valuewhen", "change_na", "supertrend", "supertrend_dir", "trail_stop",
-    "regime", "bars_in_regime",
+    "regime", "bars_in_regime", "loop_sum_first", "loop_sum_last", "loop_fn_first",
+    "loop_fn_last", "loop_fn_lag",
 )  # fmt: skip
 
 
@@ -381,6 +453,11 @@ def _supertrend(ctx: Context, factor: float, atr_period: int) -> tuple[float, fl
         direction.set(1 if close < lower.value else -1)
     st.set(lower.value if direction.value == -1 else upper.value)
     return st.value, direction.value
+
+
+def _lag_diff(ctx: Context, x: float, p: int) -> float:
+    xs = ctx.series("x", x)
+    return xs.value - xs[p]
 
 
 def runtime_capture(ctx: Context) -> None:
@@ -468,6 +545,22 @@ def runtime_capture(ctx: Context) -> None:
     ctx.plot("regime", regime.value)
     ctx.plot("bars_in_regime", bars_in.value)
 
+    n = int(K["LOOP_N"])
+    got = dict.fromkeys(("sf", "sl", "ff", "fl", "lag"), ps.NA)
+    for j in ctx.loop("loop", range(1, n + 1)):
+        s = ctx.ta.sum("loopSum", close * j, int(K["LOOP_LEN"]))
+        d = ctx.call("loopDiff", _diff, close * j)
+        g = ctx.call("loopLag", _lag_diff, close, j)
+        if j == 1:
+            got["sf"], got["ff"] = s, d
+        if j == n:
+            got["sl"], got["fl"], got["lag"] = s, d, g
+    ctx.plot("loop_sum_first", got["sf"])
+    ctx.plot("loop_sum_last", got["sl"])
+    ctx.plot("loop_fn_first", got["ff"])
+    ctx.plot("loop_fn_last", got["fl"])
+    ctx.plot("loop_fn_lag", got["lag"])
+
 
 # ------------------------------------------------------------------ deciding
 
@@ -523,6 +616,8 @@ def _truncation_rule(group: str, b, tol: float):
         "supertrend": ("sync", K["ST_ATR"] - 1 + cb(1 / K["ST_ATR"], e0_tr)),
         "trail_stop": ("sync", K["TRAIL_ATR"] - 1 + cb(1 / K["TRAIL_ATR"], e0_tr)),
         "regime": ("sync", K["SLOW"] - 1 + cb(2 / (K["SLOW"] + 1))),
+        "loop_builtin": int(K["LOOP_N"] + K["LOOP_LEN"]),
+        "loop_userfn": int(K["LOOP_N"] + K["LOOP_LEN"]),
     }
     return rules.get(group, 0)
 
@@ -616,9 +711,9 @@ def _status(d: GroupDecision) -> str:
     return "**runtime must change**"
 
 
-def _summary(decisions: list[GroupDecision]) -> str:
+def _summary(decisions: list[GroupDecision], title: str = "Pine semantics") -> str:
     lines = [
-        "## Pine semantics",
+        f"## {title}",
         "",
         "| group | expected (runtime) | matching | status | rows excluded "
         "| first divergence of expected |",

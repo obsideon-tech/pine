@@ -1,0 +1,47 @@
+//@version=6
+// pine built-in capture (PINE_PLAN.md §11 F)
+//
+// TradingView reference values for the built-ins added in batch F: math.sum, ta.wma, ta.hma,
+// ta.variance, ta.percentile_linear_interpolation, ta.pivothigh/pivotlow, fixnan, ta.cum,
+// ta.obv, ta.pvt; their `na` handling; and the details the manual leaves open (hma's length
+// rounding, pivot ties, the percentile rank). Self-written and public.
+//
+// Use: add to the same chart as the other capture scripts, export chart data, then run
+//   uv run python -m pine.capture check <your.csv>        (guide: docs/CAPTURE.md)
+//
+// Plot titles and constants must match src/pine/builtin_capture.py
+// (tests/test_builtin_capture.py enforces this).
+indicator("pine builtin capture", overlay = false, precision = 10)
+
+const int LEN = 10
+const int HMA_ODD = 9
+const int HMA_NONSQUARE = 14
+const int PIV_LEFT = 3
+const int PIV_RIGHT = 2
+const float PCT = 30.0
+const int GAP_PERIOD = 50
+const int GAP_WIDTH = 3
+
+float srcNa = bar_index % GAP_PERIOD >= GAP_PERIOD - GAP_WIDTH ? na : close
+
+plot(bar_index, "bi_bar_index")
+plot(volume, "bi_volume")
+
+plot(math.sum(close, LEN), "bi_sum")
+plot(math.sum(srcNa, LEN), "bi_sum_na")
+plot(ta.wma(close, LEN), "bi_wma")
+plot(ta.wma(srcNa, LEN), "bi_wma_na")
+// HMA_ODD: is length / 2 truncated or rounded? HMA_NONSQUARE: is sqrt(length) floored or rounded?
+plot(ta.hma(close, HMA_ODD), "bi_hma_odd")
+plot(ta.hma(close, HMA_NONSQUARE), "bi_hma_nonsquare")
+plot(ta.variance(close, LEN), "bi_variance")
+plot(ta.variance(srcNa, LEN), "bi_variance_na")
+plot(ta.percentile_linear_interpolation(close, LEN, PCT), "bi_pctl")
+plot(ta.percentile_linear_interpolation(srcNa, LEN, PCT), "bi_pctl_na")
+plot(ta.pivothigh(high, PIV_LEFT, PIV_RIGHT), "bi_pivothigh")
+plot(ta.pivotlow(low, PIV_LEFT, PIV_RIGHT), "bi_pivotlow")
+plot(fixnan(srcNa), "bi_fixnan")
+plot(ta.cum(close), "bi_cum")
+plot(ta.cum(srcNa), "bi_cum_na")
+plot(ta.obv, "bi_obv")
+plot(ta.pvt, "bi_pvt")

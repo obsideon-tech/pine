@@ -1,6 +1,7 @@
 """One entry point for TradingView capture exports (docs/CAPTURE.md).
 
-Put both ``tools/reference_capture.pine`` and ``tools/capture_semantics.pine`` on one chart,
+Put the capture scripts (``tools/reference_capture.pine``, ``tools/capture_semantics.pine``,
+optionally ``tools/capture_builtins.pine`` and ``tools/capture_strategy.pine``) on one chart,
 export chart data once, then::
 
     uv run python -m pine.capture manifest ~/Downloads/NASDAQ_AAPL_1D.csv \\
@@ -9,8 +10,9 @@ export chart data once, then::
 
 ``manifest`` writes ``<csv>.yaml`` next to the export (refuses to overwrite without
 ``--force``). ``check`` runs every check the export supports — built-in parity and the
-``na``-handling decision (`pine.reference`) and Pine semantics (`pine.semantics`) — and writes
-one combined report. Exit status: 0 all checks that ran passed; 1 something differs; 2 input
+``na``-handling decision (`pine.reference`), Pine semantics (`pine.semantics`), the batch-F
+built-ins (`pine.builtin_capture`) and the strategy engine (`pine.strategy_capture`) — and
+writes one combined report. Exit status: 0 all checks that ran passed; 1 something differs; 2 input
 problem (missing file, no capture columns, invalid manifest).
 """
 
@@ -24,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-from pine import reference, semantics, strategy_capture
+from pine import builtin_capture, reference, semantics, strategy_capture
 from pine._cli import InputError, load_export
 from pine.io import load_tradingview_csv
 from pine.manifest import ManifestError, validate_manifest
@@ -66,6 +68,10 @@ def write_manifest(
         scripts.append("pine semantics capture")
         inputs |= {f"semantics.{k}": v for k, v in semantics.CONSTANTS.items()}
         cols += semantics.COLUMNS
+    if _present(exp, builtin_capture.COLUMNS):
+        scripts.append("pine builtin capture")
+        inputs |= {f"builtins.{k}": v for k, v in builtin_capture.CONSTANTS.items()}
+        cols += builtin_capture.COLUMNS
     if _present(exp, strategy_capture.COLUMNS):
         scripts.append("pine strategy capture")
         inputs |= {f"strategy.{k}": v for k, v in strategy_capture.CONSTANTS.items()}
@@ -104,7 +110,8 @@ def write_manifest(
 def run_checks(exp, inputs_rounded: bool = False, mintick: float | None = None) -> dict:
     """Run every check the export supports. Returns a dict with per-check results."""
     result: dict = {
-        "reference": None, "semantics": None, "strategy": None, "skipped": [], "errors": [],
+        "reference": None, "semantics": None, "builtins": None, "strategy": None,
+        "skipped": [], "errors": [],
     }  # fmt: skip
     if _present(exp, reference.PLOT_TITLES):
         delta = reference.ohlc_rounding(exp) if inputs_rounded else None
@@ -123,6 +130,13 @@ def run_checks(exp, inputs_rounded: bool = False, mintick: float | None = None) 
             result["errors"].append(f"semantics: {exc}")
     else:
         result["skipped"].append("semantics (tools/capture_semantics.pine not in the export)")
+    if _present(exp, builtin_capture.COLUMNS):
+        try:
+            result["builtins"] = builtin_capture.decide(exp)
+        except ValueError as exc:
+            result["errors"].append(f"builtins: {exc}")
+    else:
+        result["skipped"].append("builtins (tools/capture_builtins.pine not in the export)")
     if _present(exp, strategy_capture.COLUMNS):
         try:
             result["strategy"] = strategy_capture.decide(exp, mintick=mintick)
@@ -140,6 +154,8 @@ def _passed(result: dict) -> bool:
         ok &= rep.passed and all(d.decided for d in na)
     if result["semantics"]:
         ok &= all(d.ok for d in result["semantics"])
+    if result["builtins"]:
+        ok &= all(d.ok for d in result["builtins"])
     if result["strategy"]:
         ok &= all(d.ok for d in result["strategy"])
     return ok
@@ -160,6 +176,8 @@ def _markdown(csv: Path, manifest, result: dict) -> str:
         out.append(reference._summary(rep, na))
     if result["semantics"]:
         out.append(semantics._summary(result["semantics"]))
+    if result["builtins"]:
+        out.append(builtin_capture.summary(result["builtins"]))
     if result["strategy"]:
         out.append(strategy_capture.summary(result["strategy"]))
     if result.get("errors"):
@@ -196,6 +214,11 @@ def _json(csv: Path, result: dict) -> str:
         payload["semantics"] = [
             {"group": d.group, "expected": d.expected, "matching": list(d.matching), "ok": d.ok}
             for d in result["semantics"]
+        ]
+    if result["builtins"]:
+        payload["builtins"] = [
+            {"group": d.group, "expected": d.expected, "matching": list(d.matching), "ok": d.ok}
+            for d in result["builtins"]
         ]
     if result["strategy"]:
         payload["strategy"] = [
@@ -270,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
             mintick = man.mintick
         result = run_checks(exp, inputs_rounded=args.inputs_rounded, mintick=mintick)
         if not result["errors"] and all(
-            result[k] is None for k in ("reference", "semantics", "strategy")
+            result[k] is None for k in ("reference", "semantics", "builtins", "strategy")
         ):
             raise InputError(
                 f"{csv} contains neither capture script's columns; see docs/CAPTURE.md step 2"

@@ -4,8 +4,8 @@
 // Observes Pine's execution model and scalar rules, which pine.runtime must reproduce:
 // conditional evaluation of built-ins and user functions, per-call-site history, var/varip,
 // branch-assigned history, math.round, %, int division, int(), na comparisons, barssince,
-// valuewhen, change around na, and three stateful ports (Supertrend, a ratcheting stop, a
-// regime state machine). Self-written and public.
+// valuewhen, change around na, three stateful ports (Supertrend, a ratcheting stop, a
+// regime state machine), and calls inside a `for` loop. Self-written and public.
 //
 // Use: put this and tools/reference_capture.pine on one chart, export chart data, and run
 //   uv run python -m pine.capture manifest <your.csv> --symbol ... --timeframe ... --timezone ...
@@ -28,6 +28,8 @@ const int ST_ATR = 10
 const float ST_FACTOR = 3.0
 const int TRAIL_ATR = 14
 const float TRAIL_MULT = 2.0
+const int LOOP_N = 3
+const int LOOP_LEN = 2
 
 // Alignment check (§5.4): must equal 0, 1, 2, ... from the first exported row.
 plot(bar_index, "bar_index")
@@ -120,3 +122,30 @@ else
     barsIn += 1
 plot(regime, "regime")
 plot(barsIn, "bars_in_regime")
+
+// Calls inside a `for` loop: each call site runs LOOP_N times per bar. Does its state
+// advance on every call, keep only the bar's last value, or behave as one site per
+// iteration? Probed for a stateful built-in (math.sum) and for a user function's history.
+lagDiff(float x, int p) => x - x[p]
+
+float loopSumFirst = na
+float loopSumLast = na
+float loopFnFirst = na
+float loopFnLast = na
+float loopFnLag = na
+for i = 1 to LOOP_N
+    s = math.sum(close * i, LOOP_LEN)
+    d = diff(close * i)
+    g = lagDiff(close, i)
+    if i == 1
+        loopSumFirst := s
+        loopFnFirst := d
+    if i == LOOP_N
+        loopSumLast := s
+        loopFnLast := d
+        loopFnLag := g
+plot(loopSumFirst, "loop_sum_first")
+plot(loopSumLast, "loop_sum_last")
+plot(loopFnFirst, "loop_fn_first")
+plot(loopFnLast, "loop_fn_last")
+plot(loopFnLag, "loop_fn_lag")

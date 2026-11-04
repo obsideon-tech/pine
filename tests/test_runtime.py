@@ -197,9 +197,9 @@ def test_incremental_equals_vectorised_under_every_na_policy(seed, n, name, poli
 
 
 def test_runtime_defaults_follow_observed_policy():
-    from pine.ta import DEFAULT_NA_POLICY
+    from pine.ta import DEFAULT_NA_POLICY, NA_POLICY_OBSERVED
 
-    assert DEFAULT_NA_POLICY == {
+    assert {k: DEFAULT_NA_POLICY[k] for k in NA_POLICY_OBSERVED} == {
         "sma": "skip", "stdev": "skip", "highest": "skip", "lowest": "skip",
         "ema": "skip_na_out", "rma": "skip_na_out", "rsi": "skip_na_out",
     }  # fmt: skip
@@ -289,3 +289,87 @@ def test_scalar_helpers():
 def test_max_bars_back_validated():
     with pytest.raises(ValueError):
         run(lambda ctx: None, _bars(n=2), max_bars_back=0)
+
+
+# ---------- for loops (ctx.loop) ----------
+
+
+def test_loop_call_site_shared_across_iterations():
+    b = _bars(1, n=30)
+
+    def script(ctx):
+        got = []
+        for j in ctx.loop("lp", range(1, 4)):
+            got.append(ctx.ta.sum("s", ctx.close.value * j, 2))
+            xs = ctx.series("x", float(j))
+            got.append(xs[1])
+        ctx.plot("first_sum", got[0])
+        ctx.plot("last_sum", got[4])
+        ctx.plot("first_prev", got[1])
+        ctx.plot("last_prev", got[5])
+
+    r = run(script, b)
+    c = b.close
+    # One state for the site: the window holds the last two *calls*.
+    np.testing.assert_allclose(r["first_sum"][1:], 3 * c[:-1] + c[1:])
+    np.testing.assert_allclose(r["last_sum"], 5 * c)
+    assert np.isnan(r["first_sum"][0])
+    # Series history inside the body is per iteration.
+    assert np.isnan(r["first_prev"][0]) and (r["first_prev"][1:] == 3.0).all()
+    assert (r["last_prev"] == 2.0).all()
+
+
+def test_loop_keys_unique_per_iteration_and_outside():
+    b = _bars(2, n=5)
+
+    def twice_in_one_iteration(ctx):
+        for _ in ctx.loop("lp", range(2)):
+            ctx.series("x")
+            ctx.series("x")
+
+    with pytest.raises(DuplicateKeyError):
+        run(twice_in_one_iteration, b)
+
+    def loop_key_reused(ctx):
+        for _ in ctx.loop("lp", range(1)):
+            pass
+        for _ in ctx.loop("lp", range(1)):
+            pass
+
+    with pytest.raises(DuplicateKeyError):
+        run(loop_key_reused, b)
+
+
+def test_loop_break_and_empty_restore_scope():
+    b = _bars(3, n=10)
+
+    def script(ctx):
+        for j in ctx.loop("lp", range(5)):
+            if j == 1:
+                break
+        for _ in ctx.loop("none", range(0)):
+            pass  # pragma: no cover
+        ctx.plot("after", ctx.series("x", 1.0).value)
+        assert ctx._prefix == ""
+
+    assert (run(script, b)["after"] == 1.0).all()
+
+
+def test_nested_loops_and_calls_in_loops():
+    b = _bars(4, n=12)
+
+    def add_prev(ctx, v):
+        s = ctx.series("v", v)
+        return s.value + (0.0 if np.isnan(s[1]) else s[1])
+
+    def script(ctx):
+        tot = 0.0
+        for i in ctx.loop("outer", range(2)):
+            for j in ctx.loop("inner", range(2)):
+                tot += ctx.call("f", add_prev, float(i * 2 + j))
+        ctx.plot("tot", tot)
+
+    r = run(script, b)
+    # Calls in order 0,1,2,3 every bar; each adds the previous call's value (3 on bar t > 0).
+    assert r["tot"][0] == 0 + 1 + 3 + 5
+    assert (r["tot"][1:] == 3 + 1 + 3 + 5).all()
