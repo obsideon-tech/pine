@@ -717,7 +717,8 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         "Verification status" section is generated (`python -m pine.registry --write
         README.md`) and CI fails if it is stale. Gaps it makes visible: no deliberate-bug
         tests yet for `tr` (covered only via `atr`), `crossunder`, `change`, `barssince`,
-        `valuewhen`, `supertrend`, `pivotlow`.
+        `valuewhen`, `supertrend`, `pivotlow`. Closed 2026-11-04 by
+        `tests/test_mutation_more.py`: every public built-in now has deliberate-bug cases.
 - [ ] **[med] G1 — Sessions and calendar** (§11 G1)
       - _Raised:_ 2026-11-03
       - _Why:_ `ta.vwap` and session-based logic reset on session boundaries.

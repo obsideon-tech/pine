@@ -135,8 +135,8 @@ builtins:
     tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
     na_policy: []
     bound: LIPSCHITZ:tr
-    mutation: null
-    notes: both ta.tr and ta.tr(true); deliberate bugs covered only through atr
+    mutation: tests/test_mutation_more.py
+    notes: both ta.tr and ta.tr(true)
   atr:
     pine: ta.atr
     runtime: atr
@@ -161,7 +161,7 @@ builtins:
     tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
     na_policy: []
     bound: null
-    mutation: null
+    mutation: tests/test_mutation_more.py
     notes: discrete; flips at near-ties are excused instead of bounded
   change:
     pine: ta.change
@@ -170,7 +170,7 @@ builtins:
     tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
     na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
     bound: null
-    mutation: null
+    mutation: tests/test_mutation_more.py
     notes: propagates na (semantics group change_na)
   barssince:
     pine: ta.barssince
@@ -179,7 +179,7 @@ builtins:
     tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
     na_policy: []
     bound: null
-    mutation: null
+    mutation: tests/test_mutation_more.py
     notes: na before the first event, decided on nflx_1w and doge_1d (exports from bar 0)
   valuewhen:
     pine: ta.valuewhen
@@ -188,7 +188,7 @@ builtins:
     tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
     na_policy: []
     bound: null
-    mutation: null
+    mutation: tests/test_mutation_more.py
     notes: na before the first event, decided on nflx_1w and doge_1d (exports from bar 0)
   supertrend:
     pine: ta.supertrend
@@ -197,7 +197,7 @@ builtins:
     tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
     na_policy: []
     bound: null
-    mutation: null
+    mutation: tests/test_mutation_more.py
     notes: checked as the manual's code ported on pine.runtime; direction is discrete
   math_sum:
     pine: math.sum
@@ -255,7 +255,7 @@ builtins:
     tradingview: []
     na_policy: []
     bound: null
-    mutation: null
+    mutation: tests/test_mutation_more.py
     notes: discontinuous in its inputs, so no rounding bound; mirror of pivothigh
   fixnan:
     pine: fixnan
