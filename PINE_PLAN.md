@@ -1293,6 +1293,20 @@ hypotheses. Rather than guess again, `python -m pine.capture rows <csv> --group 
 --from 40` now prints TradingView's values next to every hypothesis around a row, so the
 rule can be read off the data.
 
+**Read off the data (`rows`, NFLX rows 44–63, gap at 48–50), both reproduced on every row of
+the excerpt with a full window (11 rows each, ≤ 1e-9):**
+
+- `ta.wma` → **`fill_na_out`**: each `na` in the window takes the last valid value before it;
+  the output is `na` only on bars whose own source is `na`.
+- `ta.percentile_linear_interpolation` → **`fill_key`**: `na` entries sort as if they were the
+  last valid value (after real values with the same key); the result is `na` when the
+  interpolation uses an `na` entry (rows 54–57), while the `na` bars themselves keep a value.
+
+Neither matches the windowed built-ins' `skip`: `na` handling differs per built-in, so every
+new built-in needs its own `na` column. The excerpt's 20 closes and TradingView's values are
+committed as a regression test (numbers only, as for the DOGE strategy rows). `hma` is built
+from `wma` and follows it by analogy, unverified.
+
 ## 13. Strategy parity (`strategy.*`)
 
 Decided in scope on 2026-11-03 (§11 I). Goal: a Python port of a Pine strategy reproduces

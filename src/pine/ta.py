@@ -42,6 +42,17 @@ from numpy.typing import ArrayLike
 
 NaPolicy = Literal["propagate", "skip", "skip_na_out"]
 NA_POLICIES: tuple[str, ...] = ("propagate", "skip", "skip_na_out")
+# Policies observed for single built-ins only (BATS:NFLX 1D, 2026-11-05; PINE_PLAN.md §12):
+# - ``fill_na_out`` (wma): the window is the last ``length`` bars with each `na` replaced by
+#   the last valid value before it; `na` on bars whose own source is `na`.
+# - ``fill_key`` (percentile_linear_interpolation): `na` entries sort as if they were the last
+#   valid value before them (ties: real values first); the result is `na` if the
+#   interpolation uses an `na` entry. Bars whose own source is `na` still get a value.
+EXTRA_NA_POLICIES: dict[str, tuple[str, ...]] = {
+    "wma": ("fill_na_out",),
+    "hma": ("fill_na_out",),
+    "percentile_linear_interpolation": ("fill_key",),
+}
 DEFAULT_NA_POLICY: dict[str, str] = {
     "sma": "skip",
     "stdev": "skip",
@@ -51,17 +62,30 @@ DEFAULT_NA_POLICY: dict[str, str] = {
     "rma": "skip_na_out",
     "rsi": "skip_na_out",
     # Batch F (PINE_PLAN.md §11 F). Observed on BATS:NFLX 1D (2026-11-05): sum and variance
-    # `skip`, cum `skip_na_out`. Still expected by analogy, not observed: wma, hma, and
-    # percentile (the NFLX export matched none of the three policies for wma and percentile).
+    # `skip`, cum `skip_na_out`, wma `fill_na_out`, percentile `fill_key` (see
+    # EXTRA_NA_POLICIES). hma follows wma by analogy (it is built from wma), not observed.
     "sum": "skip",
-    "wma": "skip",
-    "hma": "skip",
+    "wma": "fill_na_out",
+    "hma": "fill_na_out",
     "variance": "skip",
-    "percentile_linear_interpolation": "skip",
+    "percentile_linear_interpolation": "fill_key",
     "cum": "skip_na_out",
 }
 NA_POLICY_OBSERVED: frozenset[str] = frozenset(
-    ("sma", "stdev", "highest", "lowest", "ema", "rma", "rsi", "sum", "variance", "cum")
+    (
+        "sma",
+        "stdev",
+        "highest",
+        "lowest",
+        "ema",
+        "rma",
+        "rsi",
+        "sum",
+        "variance",
+        "cum",
+        "wma",
+        "percentile_linear_interpolation",
+    )
 )
 """Built-ins whose `DEFAULT_NA_POLICY` entry is observed on a TradingView export (§12)."""
 
@@ -97,6 +121,7 @@ __all__ = [
     "obv",
     "pvt",
     "NA_POLICY_OBSERVED",
+    "EXTRA_NA_POLICIES",
 ]
 
 
@@ -109,8 +134,9 @@ def _length(length: int) -> int:
 def _policy(na_policy: str | None, name: str | None = None) -> str:
     if na_policy is None and name is not None:
         return DEFAULT_NA_POLICY[name]
-    if na_policy not in NA_POLICIES:
-        raise ValueError(f"na_policy must be one of {NA_POLICIES}, got {na_policy!r}")
+    allowed = NA_POLICIES + EXTRA_NA_POLICIES.get(name or "", ())
+    if na_policy not in allowed:
+        raise ValueError(f"na_policy must be one of {allowed}, got {na_policy!r}")
     return na_policy
 
 

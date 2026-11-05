@@ -202,7 +202,8 @@ def test_runtime_defaults_follow_observed_policy():
     assert {k: DEFAULT_NA_POLICY[k] for k in NA_POLICY_OBSERVED} == {
         "sma": "skip", "stdev": "skip", "highest": "skip", "lowest": "skip",
         "ema": "skip_na_out", "rma": "skip_na_out", "rsi": "skip_na_out",
-        "sum": "skip", "variance": "skip", "cum": "skip_na_out",
+        "sum": "skip", "variance": "skip", "cum": "skip_na_out", "wma": "fill_na_out",
+        "percentile_linear_interpolation": "fill_key",
     }  # fmt: skip
 
 

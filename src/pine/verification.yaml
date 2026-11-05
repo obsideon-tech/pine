@@ -218,7 +218,7 @@ builtins:
     runtime: wma
     capture: builtins
     tradingview: [nflx_1d_b]
-    na_policy: []
+    na_policy: [nflx_1d_b]
     bound: LIPSCHITZ:wma
     mutation: tests/test_mutation_batch_f.py
   hma:
@@ -242,7 +242,7 @@ builtins:
     runtime: percentile_linear_interpolation
     capture: builtins
     tradingview: [nflx_1d_b]
-    na_policy: []
+    na_policy: [nflx_1d_b]
     bound: LIPSCHITZ:percentile_linear_interpolation
     mutation: tests/test_mutation_batch_f.py
   pivothigh:
@@ -325,12 +325,12 @@ decisions:
   builtins.sum: {expected: window, tradingview: [nflx_1d_b]}
   builtins.sum_na: {expected: skip, tradingview: [nflx_1d_b]}
   builtins.wma: {expected: linear_weights, tradingview: [nflx_1d_b]}
-  builtins.wma_na: {expected: skip, tradingview: []}
+  builtins.wma_na: {expected: fill_na_out, tradingview: [nflx_1d_b]}
   builtins.hma: {expected: half_floor_sqrt_floor, tradingview: [nflx_1d_b]}
   builtins.variance: {expected: population, tradingview: [nflx_1d_b]}
   builtins.variance_na: {expected: skip, tradingview: [nflx_1d_b]}
   builtins.percentile: {expected: hazen, tradingview: [nflx_1d_b]}
-  builtins.percentile_na: {expected: skip, tradingview: []}
+  builtins.percentile_na: {expected: fill_key, tradingview: [nflx_1d_b]}
   builtins.pivots: {expected: right_strict, tradingview: [nflx_1d_b]}
   builtins.fixnan: {expected: last_valid, tradingview: [nflx_1d_b]}
   builtins.cum: {expected: running_total, tradingview: [nflx_1d_b]}
