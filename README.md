@@ -175,10 +175,10 @@ Exports: `nflx_1d` BATS:NFLX 1D (from bar 3116); `nflx_1w` BATS:NFLX 1W (from ba
 | execution rules | verified | capture ready |
 |---|---|---|
 | semantics | 20 of 22 | 2 |
-| builtins | 0 of 16 | 16 |
+| builtins | 0 of 21 | 21 |
 | strategy | 7 of 8 | 1 |
 
-Awaiting an export: `semantics.loop_builtin`, `semantics.loop_userfn`, `builtins.alignment`, `builtins.sum`, `builtins.sum_na`, `builtins.wma`, `builtins.wma_na`, `builtins.hma`, `builtins.variance`, `builtins.variance_na`, `builtins.percentile`, `builtins.percentile_na`, `builtins.pivots`, `builtins.fixnan`, `builtins.cum`, `builtins.cum_na`, `builtins.obv`, `builtins.pvt`, `strategy.gap_fill`.
+Awaiting an export: `semantics.loop_builtin`, `semantics.loop_userfn`, `builtins.alignment`, `builtins.sum`, `builtins.sum_na`, `builtins.wma`, `builtins.wma_na`, `builtins.hma`, `builtins.variance`, `builtins.variance_na`, `builtins.percentile`, `builtins.percentile_na`, `builtins.pivots`, `builtins.fixnan`, `builtins.cum`, `builtins.cum_na`, `builtins.obv`, `builtins.pvt`, `builtins.barstate`, `builtins.timeframe`, `builtins.in_seconds`, `builtins.from_seconds`, `builtins.tf_change`, `strategy.gap_fill`.
 
 <!-- verification-table:end -->
 

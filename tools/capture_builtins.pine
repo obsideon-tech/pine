@@ -3,8 +3,9 @@
 //
 // TradingView reference values for the built-ins added in batch F: math.sum, ta.wma, ta.hma,
 // ta.variance, ta.percentile_linear_interpolation, ta.pivothigh/pivotlow, fixnan, ta.cum,
-// ta.obv, ta.pvt; their `na` handling; and the details the manual leaves open (hma's length
-// rounding, pivot ties, the percentile rank). Self-written and public.
+// ta.obv, ta.pvt; their `na` handling; the details the manual leaves open (hma's length
+// rounding, pivot ties, the percentile rank); and barstate.* / timeframe.*. Self-written and
+// public.
 //
 // Use: add to the same chart as the other capture scripts, export chart data, then run
 //   uv run python -m pine.capture check <your.csv>        (guide: docs/CAPTURE.md)
@@ -45,3 +46,25 @@ plot(ta.cum(close), "bi_cum")
 plot(ta.cum(srcNa), "bi_cum_na")
 plot(ta.obv, "bi_obv")
 plot(ta.pvt, "bi_pvt")
+
+// barstate.* (1 = true). On the last row they depend on whether that bar was live when the
+// chart was exported; the checker accepts either and reports which.
+plot(barstate.isfirst ? 1 : 0, "bi_isfirst")
+plot(barstate.islast ? 1 : 0, "bi_islast") // pine-lint: ignore[barstate-realtime]
+plot(barstate.ishistory ? 1 : 0, "bi_ishistory")
+plot(barstate.isrealtime ? 1 : 0, "bi_isrealtime") // pine-lint: ignore[barstate-realtime]
+plot(barstate.isnew ? 1 : 0, "bi_isnew") // pine-lint: ignore[barstate-realtime]
+plot(barstate.isconfirmed ? 1 : 0, "bi_isconfirmed")
+plot(barstate.islastconfirmedhistory ? 1 : 0, "bi_islch")
+
+// timeframe.* : the chart's constants (flags packed into one number), the spelling of
+// timeframe.period (via its length: "1D" vs "D"), seconds per month, from_seconds, and
+// timeframe.change for weeks and months.
+plot(timeframe.multiplier, "bi_tf_mult")
+plot((timeframe.isseconds ? 1 : 0) + (timeframe.isminutes ? 2 : 0) + (timeframe.isintraday ? 4 : 0) + (timeframe.isdaily ? 8 : 0) + (timeframe.isweekly ? 16 : 0) + (timeframe.ismonthly ? 32 : 0) + (timeframe.isdwm ? 64 : 0), "bi_tf_flags")
+plot(str.length(timeframe.period), "bi_tf_period_len")
+plot(timeframe.in_seconds(), "bi_tf_secs")
+plot(timeframe.in_seconds("1M"), "bi_secs_month")
+plot(timeframe.in_seconds(timeframe.from_seconds(90000)), "bi_from_secs_25h")
+plot(timeframe.change("1W") ? 1 : 0, "bi_chg_week")
+plot(timeframe.change("1M") ? 1 : 0, "bi_chg_month")

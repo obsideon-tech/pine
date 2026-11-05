@@ -32,6 +32,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pine import chart as _chart
 from pine.bars import Bars
 from pine.runtime import builtins as _b
 from pine.runtime.scalar import NA
@@ -205,8 +206,41 @@ class _TA:
         )
 
 
+class _TimeframeView:
+    """``ctx.timeframe``: the chart's `pine.chart.Timeframe` constants plus ``change``."""
+
+    def __init__(self, ctx: Context):
+        self._ctx = ctx
+        self._tf = _chart.Timeframe.of(ctx.bars.timeframe)
+        self._ids: dict[str, list] = {}
+
+    def __getattr__(self, name):
+        return getattr(self._tf, name)
+
+    def in_seconds(self, tf: str | None = None) -> int:
+        return self._tf.in_seconds(tf)
+
+    @staticmethod
+    def from_seconds(seconds: int) -> str:
+        return _chart.from_seconds(seconds)
+
+    def change(self, tf: str) -> bool:
+        """``timeframe.change(tf)`` on the current bar (stateless: it compares bar times)."""
+        ids = self._ids.get(tf)
+        if ids is None:
+            ids = self._ids[tf] = _chart.period_ids(self._ctx.bars, tf)
+        i = self._ctx.i
+        return i == 0 or ids[i] != ids[i - 1]
+
+
 class Context:
-    def __init__(self, bars: Bars, max_bars_back: int = 5000, bar_offset: int = 0):
+    def __init__(
+        self,
+        bars: Bars,
+        max_bars_back: int = 5000,
+        bar_offset: int = 0,
+        live_last_bar: bool = False,
+    ):
         if max_bars_back < 1:
             raise ValueError("max_bars_back must be >= 1")
         if bar_offset < 0:
@@ -220,6 +254,8 @@ class Context:
         self.volume, self.time, self.bar_index = mk(), mk(), mk()
         self.i = -1
         self.ta = _TA(self)
+        self.timeframe = _TimeframeView(self)
+        self.live_last_bar = live_last_bar
         self._nodes: dict[str, object] = {}
         self._used: set[str] = set()
         self._prefix = ""
@@ -249,6 +285,11 @@ class Context:
         self.volume._push(b.volume[i])
         self.time._push(b.ts[i])
         self.bar_index._push(self.bar_offset + i)
+
+    @property
+    def barstate(self) -> _chart.BarState:
+        """``barstate.*`` of the current bar (`pine.chart.BarState`)."""
+        return _chart.BarState(self.i, len(self.bars), self.bar_offset, self.live_last_bar)
 
     # -- declarations -----------------------------------------------------------------------
     def series(self, key: str, init=NA) -> Series:
@@ -331,13 +372,15 @@ def run(
     *,
     strategy=None,
     bar_offset: int = 0,
+    live_last_bar: bool = False,
 ) -> RunResult:
     """Execute ``script`` once per bar; return the plotted columns.
 
     ``strategy``: a `pine.strategy.StrategyConfig` to give the script ``ctx.strategy`` (a
     broker emulator; orders fill around each script execution per the config).
-    ``bar_offset``: true ``bar_index`` of the first bar (exports that start mid-history)."""
-    ctx = Context(bars, max_bars_back, bar_offset)
+    ``bar_offset``: true ``bar_index`` of the first bar (exports that start mid-history).
+    ``live_last_bar``: the last bar was live when exported (``barstate.isrealtime`` there)."""
+    ctx = Context(bars, max_bars_back, bar_offset, live_last_bar)
     broker = None
     if strategy is not None:
         from pine.strategy import Broker
