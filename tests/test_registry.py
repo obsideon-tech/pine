@@ -70,7 +70,8 @@ def test_markdown_lists_every_pine_builtin_and_pending_rule():
     for b in data["builtins"].values():
         if b["pine"]:
             assert f"`{b['pine']}`" in md
-    assert "`strategy.gap_fill`" in md and md.startswith(registry.START)
+    pending = [g for g, d in data["decisions"].items() if not d["tradingview"]]
+    assert all(f"`{g}`" in md for g in pending) and md.startswith(registry.START)
 
 
 def test_cli_modes(tmp_path, capsys):

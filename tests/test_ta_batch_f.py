@@ -54,13 +54,15 @@ def test_closed_forms():
     assert ta.wma(x, 3)[-1] == pytest.approx((10 * 3 + 9 * 2 + 8) / 6)
     assert ta.variance(x, 4)[-1] == pytest.approx(1.25)
     assert ta.variance(x, 4, biased=False)[-1] == pytest.approx(5 / 3)
-    assert ta.percentile_linear_interpolation(x, 4, 30)[-1] == pytest.approx(7.9)
+    # Hazen rank 0.3·4 − 0.5 = 0.7 in [7, 8, 9, 10] (observed rule, 2026-11-05).
+    assert ta.percentile_linear_interpolation(x, 4, 30)[-1] == pytest.approx(7.7)
     assert ta.percentile_linear_interpolation(x, 4, 100)[-1] == 10.0
     assert ta.percentile_linear_interpolation(x, 4, 0)[-1] == 7.0
     # On a straight line every WMA lags by the same amount, so HMA is exact.
     np.testing.assert_allclose(ta.hma(x, 4)[-3:], x[-3:])
     np.testing.assert_array_equal(ta.fixnan([NAN, 1, NAN, NAN, 2, NAN]), [NAN, 1, 1, 1, 2, 2])
     np.testing.assert_array_equal(ta.cum([1, 2, 3]), [1, 3, 6])
+    np.testing.assert_array_equal(ta.cum([1, np.nan, 2]), [1, np.nan, 3])  # skip_na_out
     assert np.isnan(ta.math_sum(x, 3)[:2]).all() and np.isnan(ta.wma(x, 3)[:2]).all()
 
 
@@ -69,9 +71,9 @@ def test_pivots_and_tie_rule():
     # The pivot at index 2 is reported 2 bars later.
     np.testing.assert_array_equal(ta.pivothigh(x, 2, 2), [NAN] * 4 + [5, NAN])
     np.testing.assert_array_equal(ta.pivotlow(-x, 2, 2), [NAN] * 4 + [-5, NAN])
-    # Flat top: the leftmost bar of the plateau is the pivot.
+    # Flat top: the rightmost bar of the plateau is the pivot (observed 2026-11-05).
     flat = np.array([1, 2, 5, 5, 1, 0, 0.0])
-    np.testing.assert_array_equal(ta.pivothigh(flat, 2, 2), [NAN] * 4 + [5, NAN, NAN])
+    np.testing.assert_array_equal(ta.pivothigh(flat, 2, 2), [NAN] * 5 + [5, NAN])
     # na in the window: no pivot.
     assert np.isnan(ta.pivothigh([1, NAN, 5, 3, 1.0], 2, 2)).all()
 
@@ -114,7 +116,7 @@ def test_window_builtins_match_naive_references(seed, n):
         (ta.variance(x, n, biased=False), _naive_window(x, n, lambda v: np.var(v, ddof=1))),
         (
             ta.percentile_linear_interpolation(x, n, 37.5),
-            _naive_window(x, n, lambda v: np.percentile(v, 37.5)),
+            _naive_window(x, n, lambda v: np.percentile(v, 37.5, method="hazen")),
         ),
     ]:
         np.testing.assert_allclose(got, ref, rtol=1e-9, atol=1e-9)
@@ -130,8 +132,8 @@ def test_pivots_match_naive_definition(seed, left, right):
         c = t - right
         ok = (
             c - left >= 0
-            and all(h[c] > h[c - i] for i in range(1, left + 1))
-            and all(h[c] >= h[c + i] for i in range(1, right + 1))
+            and all(h[c] >= h[c - i] for i in range(1, left + 1))
+            and all(h[c] > h[c + i] for i in range(1, right + 1))
         )
         assert (got[t] == h[c]) if ok else np.isnan(got[t])
 

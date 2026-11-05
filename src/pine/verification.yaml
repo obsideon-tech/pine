@@ -43,6 +43,12 @@ exports:
     date: 2026-11-03
     first_bar: 17845
     captures: [reference, semantics]
+  nflx_1d_b:
+    symbol: BATS:NFLX
+    timeframe: 1D
+    date: 2026-11-05
+    first_bar: 2849
+    captures: [reference, builtins, strategy]
   doge_1d_strategy:
     symbol: BINANCE:DOGEUSDT
     timeframe: 1D
@@ -64,16 +70,16 @@ builtins:
     pine: ta.sma
     runtime: sma
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
-    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
+    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     bound: LIPSCHITZ:sma
     mutation: tests/test_mutation_suite.py
   ema:
     pine: ta.ema
     runtime: ema
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
-    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
+    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     bound: LIPSCHITZ:ema
     mutation: tests/test_mutation_suite.py
     notes: seeding verified on the exports starting at bar 0 (nflx_1w, doge_1d)
@@ -81,8 +87,8 @@ builtins:
     pine: ta.rma
     runtime: rma
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
-    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
+    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     bound: LIPSCHITZ:rma
     mutation: tests/test_mutation_suite.py
     notes: seeding verified on the exports starting at bar 0 (nflx_1w, doge_1d)
@@ -90,8 +96,8 @@ builtins:
     pine: ta.rsi
     runtime: rsi
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
-    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
+    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     bound: rsi_input_error
     mutation: tests/test_mutation_suite.py
   rsi_components:
@@ -107,8 +113,8 @@ builtins:
     pine: ta.stdev
     runtime: stdev
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
-    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
+    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     bound: LIPSCHITZ:stdev
     mutation: tests/test_mutation_suite.py
     notes: population and sample both verified
@@ -116,23 +122,23 @@ builtins:
     pine: ta.highest
     runtime: highest
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
-    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
+    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     bound: LIPSCHITZ:highest
     mutation: tests/test_mutation_suite.py
   lowest:
     pine: ta.lowest
     runtime: lowest
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
-    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
+    na_policy: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     bound: LIPSCHITZ:lowest
     mutation: tests/test_mutation_suite.py
   tr:
     pine: ta.tr
     runtime: tr
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     na_policy: []
     bound: LIPSCHITZ:tr
     mutation: tests/test_mutation_more.py
@@ -141,7 +147,7 @@ builtins:
     pine: ta.atr
     runtime: atr
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     na_policy: []
     bound: LIPSCHITZ:atr
     mutation: tests/test_mutation_suite.py
@@ -149,7 +155,7 @@ builtins:
     pine: ta.crossover
     runtime: crossover
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     na_policy: []
     bound: null
     mutation: tests/test_mutation_suite.py
@@ -158,7 +164,7 @@ builtins:
     pine: ta.crossunder
     runtime: crossunder
     capture: reference
-    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60]
+    tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b]
     na_policy: []
     bound: null
     mutation: tests/test_mutation_more.py
@@ -203,15 +209,15 @@ builtins:
     pine: math.sum
     runtime: sum
     capture: builtins
-    tradingview: []
-    na_policy: []
+    tradingview: [nflx_1d_b]
+    na_policy: [nflx_1d_b]
     bound: sum_lipschitz
     mutation: tests/test_mutation_batch_f.py
   wma:
     pine: ta.wma
     runtime: wma
     capture: builtins
-    tradingview: []
+    tradingview: [nflx_1d_b]
     na_policy: []
     bound: LIPSCHITZ:wma
     mutation: tests/test_mutation_batch_f.py
@@ -219,7 +225,7 @@ builtins:
     pine: ta.hma
     runtime: hma
     capture: builtins
-    tradingview: []
+    tradingview: [nflx_1d_b]
     na_policy: []
     bound: LIPSCHITZ:hma
     mutation: tests/test_mutation_batch_f.py
@@ -227,15 +233,15 @@ builtins:
     pine: ta.variance
     runtime: variance
     capture: builtins
-    tradingview: []
-    na_policy: []
+    tradingview: [nflx_1d_b]
+    na_policy: [nflx_1d_b]
     bound: variance_input_error
     mutation: tests/test_mutation_batch_f.py
   percentile_linear_interpolation:
     pine: ta.percentile_linear_interpolation
     runtime: percentile_linear_interpolation
     capture: builtins
-    tradingview: []
+    tradingview: [nflx_1d_b]
     na_policy: []
     bound: LIPSCHITZ:percentile_linear_interpolation
     mutation: tests/test_mutation_batch_f.py
@@ -243,7 +249,7 @@ builtins:
     pine: ta.pivothigh
     runtime: pivothigh
     capture: builtins
-    tradingview: []
+    tradingview: [nflx_1d_b]
     na_policy: []
     bound: null
     mutation: tests/test_mutation_batch_f.py
@@ -252,7 +258,7 @@ builtins:
     pine: ta.pivotlow
     runtime: pivotlow
     capture: builtins
-    tradingview: []
+    tradingview: [nflx_1d_b]
     na_policy: []
     bound: null
     mutation: tests/test_mutation_more.py
@@ -261,7 +267,7 @@ builtins:
     pine: fixnan
     runtime: fixnan
     capture: builtins
-    tradingview: []
+    tradingview: [nflx_1d_b]
     na_policy: []
     bound: LIPSCHITZ:fixnan
     mutation: tests/test_mutation_batch_f.py
@@ -269,15 +275,15 @@ builtins:
     pine: ta.cum
     runtime: cum
     capture: builtins
-    tradingview: []
-    na_policy: []
+    tradingview: [nflx_1d_b]
+    na_policy: [nflx_1d_b]
     bound: cum_input_error
     mutation: tests/test_mutation_batch_f.py
   obv:
     pine: ta.obv
     runtime: obv
     capture: builtins
-    tradingview: []
+    tradingview: [nflx_1d_b]
     na_policy: []
     bound: obv_input_error
     mutation: tests/test_mutation_batch_f.py
@@ -285,7 +291,7 @@ builtins:
     pine: ta.pvt
     runtime: pvt
     capture: builtins
-    tradingview: []
+    tradingview: [nflx_1d_b]
     na_policy: []
     bound: pvt_input_error
     mutation: tests/test_mutation_batch_f.py
@@ -315,44 +321,44 @@ decisions:
   semantics.regime: {expected: per_call, tradingview: [nflx_1d, nflx_1w, doge_1d, btc_1d]}
   semantics.loop_builtin: {expected: per_call, tradingview: []}
   semantics.loop_userfn: {expected: per_call, tradingview: []}
-  builtins.alignment: {expected: aligned, tradingview: []}
-  builtins.sum: {expected: window, tradingview: []}
-  builtins.sum_na: {expected: skip, tradingview: []}
-  builtins.wma: {expected: linear_weights, tradingview: []}
+  builtins.alignment: {expected: aligned, tradingview: [nflx_1d_b]}
+  builtins.sum: {expected: window, tradingview: [nflx_1d_b]}
+  builtins.sum_na: {expected: skip, tradingview: [nflx_1d_b]}
+  builtins.wma: {expected: linear_weights, tradingview: [nflx_1d_b]}
   builtins.wma_na: {expected: skip, tradingview: []}
-  builtins.hma: {expected: half_floor_sqrt_floor, tradingview: []}
-  builtins.variance: {expected: population, tradingview: []}
-  builtins.variance_na: {expected: skip, tradingview: []}
-  builtins.percentile: {expected: inclusive, tradingview: []}
+  builtins.hma: {expected: half_floor_sqrt_floor, tradingview: [nflx_1d_b]}
+  builtins.variance: {expected: population, tradingview: [nflx_1d_b]}
+  builtins.variance_na: {expected: skip, tradingview: [nflx_1d_b]}
+  builtins.percentile: {expected: hazen, tradingview: [nflx_1d_b]}
   builtins.percentile_na: {expected: skip, tradingview: []}
-  builtins.pivots: {expected: left_strict, tradingview: []}
-  builtins.fixnan: {expected: last_valid, tradingview: []}
-  builtins.cum: {expected: running_total, tradingview: []}
-  builtins.cum_na: {expected: skip, tradingview: []}
-  builtins.obv: {expected: manual, tradingview: []}
-  builtins.pvt: {expected: manual, tradingview: []}
+  builtins.pivots: {expected: right_strict, tradingview: [nflx_1d_b]}
+  builtins.fixnan: {expected: last_valid, tradingview: [nflx_1d_b]}
+  builtins.cum: {expected: running_total, tradingview: [nflx_1d_b]}
+  builtins.cum_na: {expected: skip_na_out, tradingview: [nflx_1d_b]}
+  builtins.obv: {expected: manual, tradingview: [nflx_1d_b]}
+  builtins.pvt: {expected: manual, tradingview: [nflx_1d_b]}
   builtins.barstate:
     expected: closed_last
-    tradingview: []
+    tradingview: [nflx_1d_b]
     notes: either last-bar state is accepted and reported (run(..., live_last_bar=...))
-  builtins.timeframe: {expected: v6_spelling, tradingview: []}
-  builtins.in_seconds: {expected: month_2628003, tradingview: []}
+  builtins.timeframe: {expected: v6_spelling, tradingview: [nflx_1d_b]}
+  builtins.in_seconds: {expected: month_2628003, tradingview: [nflx_1d_b]}
   builtins.from_seconds: {expected: exact_unit, tradingview: []}
   builtins.tf_change:
     expected: first_bar_true
     tradingview: []
     notes: weeks start Monday, dated in the exchange time zone; only 1D/1W/1M targets
-  strategy.baseline: {expected: expected, tradingview: [doge_1d_strategy]}
-  strategy.fill_timing: {expected: next_open, tradingview: [doge_1d_strategy]}
-  strategy.path: {expected: nearest_extreme_first, tradingview: [doge_1d_strategy]}
+  strategy.baseline: {expected: expected, tradingview: [doge_1d_strategy, nflx_1d_b]}
+  strategy.fill_timing: {expected: next_open, tradingview: [doge_1d_strategy, nflx_1d_b]}
+  strategy.path: {expected: nearest_extreme_first, tradingview: [doge_1d_strategy, nflx_1d_b]}
   strategy.gap_fill:
     expected: open
-    tradingview: []
-    notes: needs an equity export with opening gaps (24/7 crypto never gaps)
-  strategy.exit_same_bar: {expected: "yes", tradingview: [doge_1d_strategy]}
-  strategy.price_rounding: {expected: tick, tradingview: [doge_1d_strategy]}
+    tradingview: [nflx_1d_b]
+    notes: decided on an equity export with opening gaps (24/7 crypto never gaps)
+  strategy.exit_same_bar: {expected: "yes", tradingview: [doge_1d_strategy, nflx_1d_b]}
+  strategy.price_rounding: {expected: tick, tradingview: [doge_1d_strategy, nflx_1d_b]}
   strategy.order_rounding:
     expected: conservative
-    tradingview: [doge_1d_strategy]
+    tradingview: [doge_1d_strategy, nflx_1d_b]
     notes: observed for a sell limit; the stop direction is by symmetry, not yet observed
   strategy.path_basis: {expected: raw, tradingview: [doge_1d_strategy]}

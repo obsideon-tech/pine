@@ -154,18 +154,19 @@ def test_percentile_rank_convention(bars):
 
 
 def test_pivot_tie_rule_and_delay():
-    # A flat top at bars 3-4. Expected rule marks bar 3 (reported at bar 5); a "right strict"
-    # port marks bar 4 (reported at bar 6); a port that reports at the pivot bar is 2 early.
+    # A flat top at bars 3-4. TradingView marks the right end (bar 4, observed 2026-11-05),
+    # reported 2 bars later at bar 6. A port marking the left end reports at bar 5; a port
+    # reporting at the pivot bar itself is 2 bars early (bar 4).
     h = np.array([1, 2, 3, 6, 6, 4, 3, 2, 1, 0.0])
     ref = ta.pivothigh(h, 3, 2)
-    assert np.flatnonzero(~np.isnan(ref)).tolist() == [5]
-    right_strict = np.full(h.size, np.nan)
-    right_strict[6] = 6.0
-    r = compare_series(right_strict, ref, kind="price")
+    assert np.flatnonzero(~np.isnan(ref)).tolist() == [6]
+    left_strict = np.full(h.size, np.nan)
+    left_strict[5] = 6.0
+    r = compare_series(left_strict, ref, kind="price")
     assert (r.first_divergence, r.divergence_type) == (5, "na")
     at_pivot = np.concatenate([ref[2:], [np.nan, np.nan]])
     r = compare_series(at_pivot, ref, kind="price")
-    assert (r.first_divergence, r.divergence_type) == (3, "na")
+    assert (r.first_divergence, r.divergence_type) == (4, "na")
 
 
 def test_obv_sign_of_zero_change():
@@ -186,9 +187,12 @@ def test_fixnan_and_cum_na_handling():
     # fixnan ported as nz(): 0 instead of the last value.
     r = compare_series(np.nan_to_num(x), ta.fixnan(x), kind="price")
     assert (r.first_divergence, r.divergence_type) == (1, "value")
-    # cum ported with propagate: na from the first gap on.
-    r = compare_series(ta.cum(x, na_policy="propagate"), ta.cum(x), kind="price")
+    # cum carrying its total onto na bars (TradingView gives na there, observed 2026-11-05).
+    r = compare_series(ta.cum(x, na_policy="skip"), ta.cum(x), kind="price")
     assert (r.first_divergence, r.divergence_type) == (1, "na")
+    # cum ported with propagate: na from the first gap on, so the next valid bar differs.
+    r = compare_series(ta.cum(x, na_policy="propagate"), ta.cum(x), kind="price")
+    assert (r.first_divergence, r.divergence_type) == (2, "na")
 
 
 def test_references_pass_against_themselves(bars):

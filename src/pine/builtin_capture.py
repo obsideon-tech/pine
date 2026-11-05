@@ -92,6 +92,30 @@ def _wma_ref(x: np.ndarray, n: int, policy: str = "skip") -> np.ndarray:
     return _rolling(x, n, policy, lambda win: float(np.dot(win, w) / w.sum()))
 
 
+def _hazen(w: np.ndarray) -> float:
+    return float(np.percentile(w, K["PCT"], method="hazen"))
+
+
+def _fixed_window(x: np.ndarray, n: int, fn) -> np.ndarray:
+    """``na`` handling seen in neither skip policy: the window is the last ``n`` *bars*, `na`
+    terms inside it are left out (``fn(values, mask)``), and a bar whose own value is `na`
+    gives `na`."""
+    out = np.full(x.size, np.nan)
+    for t in range(n - 1, x.size):
+        win = x[t - n + 1 : t + 1]
+        m = ~np.isnan(win)
+        if m[-1]:
+            out[t] = fn(win, m)
+    return out
+
+
+def _wma_fixed(x: np.ndarray, n: int, renorm: bool) -> np.ndarray:
+    w = np.arange(1, n + 1, dtype=float)
+    return _fixed_window(
+        x, n, lambda win, m: float(np.dot(win[m], w[m]) / (w[m].sum() if renorm else w.sum()))
+    )
+
+
 def _hma_ref(x: np.ndarray, n: int, half: str, root: str) -> np.ndarray:
     def rnd(v: float, how: str) -> int:
         return math.floor(v) if how == "floor" else math.floor(v + 0.5)
@@ -223,7 +247,12 @@ GROUPS: dict[str, dict[str, Hyp]] = {
     "sum": {"window": lambda b: {"bi_sum": _rolling(_close(b), L, "skip", np.sum)}},
     "sum_na": _policies(lambda b, p: {"bi_sum_na": _rolling(_src_na(b), L, p, np.sum)}),
     "wma": {"linear_weights": lambda b: {"bi_wma": _wma_ref(_close(b), L)}},
-    "wma_na": _policies(lambda b, p: {"bi_wma_na": _wma_ref(_src_na(b), L, p)}),
+    "wma_na": _policies(lambda b, p: {"bi_wma_na": _wma_ref(_src_na(b), L, p)})
+    | {
+        # Added after the first NFLX export matched none of the three policies (§12).
+        "window_drop_renorm": lambda b: {"bi_wma_na": _wma_fixed(_src_na(b), L, True)},
+        "window_nz": lambda b: {"bi_wma_na": _wma_fixed(_src_na(b), L, False)},
+    },
     "hma": {
         f"half_{h}_sqrt_{r}": (
             lambda b, h=h, r=r: {
@@ -253,11 +282,12 @@ GROUPS: dict[str, dict[str, Hyp]] = {
         )
         for name, m in (("inclusive", "linear"), ("exclusive", "weibull"), ("hazen", "hazen"))
     },
-    "percentile_na": _policies(
-        lambda b, p: {
-            "bi_pctl_na": _rolling(_src_na(b), L, p, lambda w: np.percentile(w, K["PCT"]))
+    "percentile_na": _policies(lambda b, p: {"bi_pctl_na": _rolling(_src_na(b), L, p, _hazen)})
+    | {
+        "window_drop": lambda b: {
+            "bi_pctl_na": _fixed_window(_src_na(b), L, lambda win, m: _hazen(win[m]))
         }
-    ),
+    },
     "pivots": {
         rule: (
             lambda b, rule=rule: {
@@ -300,8 +330,13 @@ GROUPS: dict[str, dict[str, Hyp]] = {
         )
     },  # fmt: skip
     "from_seconds": {
-        "exact_unit": lambda b: {"bi_from_secs_25h": np.full(len(b), 90_000.0)},
-        "rounded_day": lambda b: {"bi_from_secs_25h": np.full(len(b), 86_400.0)},
+        name: (lambda b, v=v: {"bi_from_secs_25h": np.full(len(b), float(v))})
+        for name, v in (
+            ("exact_unit", 90_000),  # "1500" minutes
+            ("rounded_day", 86_400),  # "1D"
+            ("ceil_day", 172_800),  # "2D": next whole day
+            ("week", 604_800),  # "1W"
+        )
     },
     "tf_change": {
         "first_bar_true": lambda b: _first_bar_hyp(b, True),
@@ -334,9 +369,9 @@ EXPECTED: dict[str, str] = {
     "hma": "half_floor_sqrt_floor",
     "variance": "population",
     "variance_na": ta.DEFAULT_NA_POLICY["variance"],
-    "percentile": "inclusive",
+    "percentile": "hazen",  # observed 2026-11-05 (NFLX 1D)
     "percentile_na": ta.DEFAULT_NA_POLICY["percentile_linear_interpolation"],
-    "pivots": "left_strict",
+    "pivots": "right_strict",  # observed 2026-11-05 (NFLX 1D)
     "fixnan": "last_valid",
     "cum": "running_total",
     "cum_na": ta.DEFAULT_NA_POLICY["cum"],
@@ -360,6 +395,8 @@ MIN_COMPARED = 100
 # Mostly-`na` columns (a value only on pivot bars): their `na` mask is compared on every row,
 # so the minimum count of compared values does not apply.
 _SPARSE = ("pivots",)
+# Groups whose columns are constant over the export (reported by value when nothing matches).
+_CONSTANT = ("timeframe", "in_seconds", "from_seconds")
 
 
 # ------------------------------------------------------------------ the script on pine.runtime
@@ -504,6 +541,14 @@ def decide(export: TradingViewExport, input_rounding: float | None = None) -> li
             # Both states are implemented (run(..., live_last_bar=...)); report which it was.
             expected = matching[0]
             note = "last bar was " + ("live" if expected == "live_last" else "closed")
+        if not matching and group in _CONSTANT:
+            # A constant column: say what TradingView printed, so the next hypothesis is a
+            # fact rather than a guess.
+            seen = []
+            for c in next(iter(hyps.values()))(b):
+                vals = np.unique(np.asarray(export.columns[c], float)[ex:])
+                seen.append(f"{c} = {', '.join(f'{v:.10g}' for v in vals[:3])}")
+            note = "observed " + "; ".join(seen)
         if note:
             pass
         elif group in ("obv", "pvt") and not np.isfinite(_volume(b)).any():

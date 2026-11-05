@@ -165,13 +165,13 @@ def test_supertrend_mutations(gapped):
 def test_pivotlow_mutations():
     lo = np.array([9, 8, 7, 3, 3, 5, 6, 7, 8, 9.0])  # flat bottom at bars 3-4
     ref = ta.pivotlow(lo, 3, 2)
-    assert np.flatnonzero(~np.isnan(ref)).tolist() == [5]  # leftmost of the flat, 2 bars late
-    right_strict = np.full(lo.size, np.nan)
-    right_strict[6] = 3.0  # marks the right end of the flat instead
-    r = compare_series(right_strict, ref, kind="price")
+    assert np.flatnonzero(~np.isnan(ref)).tolist() == [6]  # rightmost of the flat, 2 bars late
+    left_strict = np.full(lo.size, np.nan)
+    left_strict[5] = 3.0  # marks the left end of the flat instead
+    r = compare_series(left_strict, ref, kind="price")
     assert (r.first_divergence, r.divergence_type) == (5, "na")
     r = compare_series(np.concatenate([ref[2:], [np.nan] * 2]), ref, kind="price")  # no delay
-    assert (r.first_divergence, r.divergence_type) == (3, "na")
+    assert (r.first_divergence, r.divergence_type) == (4, "na")
     r = compare_series(ta.pivotlow(lo, 2, 3), ref, kind="price")  # left/right swapped
     assert not r.passed and r.divergence_type == "na"
     r = compare_series(ta.pivothigh(-lo, 3, 2) * -1, ref, kind="price")  # control: mirror
