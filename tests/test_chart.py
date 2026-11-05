@@ -33,12 +33,17 @@ def test_in_seconds(tf, secs):
 
 @pytest.mark.parametrize(
     "secs, tf",
-    [(60, "1"), (5400, "90"), (90000, "1500"), (86400, "1D"), (604800, "1W"),
-     (2628003, "1M"), (45, "45S")],
+    [(60, "1"), (5400, "90"), (86400, "1D"), (604800, "1W"), (2628003, "1M"), (45, "45S")],
 )  # fmt: skip
 def test_from_seconds_round_trips(secs, tf):
     assert chart.from_seconds(secs) == tf
     assert chart.in_seconds(chart.from_seconds(secs)) == secs
+
+
+def test_from_seconds_rounds_up_to_days():
+    # Observed on TradingView (NFLX 1D, 2026-11-05): 25 hours gives "2D", not "1500".
+    assert chart.from_seconds(90_000) == "2D"
+    assert chart.from_seconds(86_401) == "2D" and chart.from_seconds(8 * 86_400) == "8D"
 
 
 def test_from_seconds_and_timeframe_validation():

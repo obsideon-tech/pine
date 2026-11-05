@@ -175,10 +175,10 @@ Exports: `nflx_1d` BATS:NFLX 1D (from bar 3116); `nflx_1w` BATS:NFLX 1W (from ba
 | execution rules | verified | capture ready |
 |---|---|---|
 | semantics | 20 of 22 | 2 |
-| builtins | 17 of 21 | 4 |
+| builtins | 18 of 21 | 3 |
 | strategy | 8 of 8 | 0 |
 
-Awaiting an export: `semantics.loop_builtin`, `semantics.loop_userfn`, `builtins.wma_na`, `builtins.percentile_na`, `builtins.from_seconds`, `builtins.tf_change`.
+Awaiting an export: `semantics.loop_builtin`, `semantics.loop_userfn`, `builtins.wma_na`, `builtins.percentile_na`, `builtins.tf_change`.
 
 <!-- verification-table:end -->
 
