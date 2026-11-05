@@ -17,14 +17,15 @@ import math
 
 import numpy as np
 
-from pine.ta import NA_POLICIES
+from pine.ta import EXTRA_NA_POLICIES, NA_POLICIES
 
 NAN = math.nan
 
 
-def _check(policy: str) -> str:
-    if policy not in NA_POLICIES:
-        raise ValueError(f"na_policy must be one of {NA_POLICIES}, got {policy!r}")
+def _check(policy: str, extra: tuple[str, ...] = ()) -> str:
+    allowed = NA_POLICIES + extra
+    if policy not in allowed:
+        raise ValueError(f"na_policy must be one of {allowed}, got {policy!r}")
     return policy
 
 
@@ -288,11 +289,14 @@ class _Windowed:
     ``propagate``: any `na` in the window gives `na`. ``skip``/``skip_na_out``: the window
     holds the last ``length`` valid values (see `_ValidWindow`)."""
 
+    extra: tuple[str, ...] = ()
+
     def __init__(self, length: int, policy: str):
-        self.policy = _check(policy)
+        self.policy = _check(policy, self.extra)
         self.n = length
         self.w = _Window(length)
-        self.vw = None if policy == "propagate" else _ValidWindow(length, policy)
+        self.vw = None if policy in ("propagate", *self.extra) else _ValidWindow(length, policy)
+        self.last = NAN  # last valid source value (fill policies)
 
     def _window(self, x: float) -> list[float] | None:
         if self.vw is not None:
@@ -326,7 +330,25 @@ class Wma(_Windowed):
         norm := norm + weight
         sum := sum + x[i] * weight
     sum / norm
+
+    `na` handling (default ``fill_na_out``, observed): see `pine.ta.EXTRA_NA_POLICIES`.
     """
+
+    extra = EXTRA_NA_POLICIES["wma"]
+
+    def __init__(self, length: int, policy: str = "fill_na_out"):
+        super().__init__(length, policy)
+
+    def update(self, x) -> float:
+        if self.policy != "fill_na_out":
+            return super().update(x)
+        x = _f(x)
+        if not math.isnan(x):
+            self.last = x
+        self.w.push(self.last)
+        if math.isnan(x) or not self.w.full or any(math.isnan(v) for v in self.w.h):
+            return NAN
+        return self._reduce(self.w.h)
 
     def _reduce(self, h: list[float]) -> float:
         n = self.n
@@ -343,7 +365,7 @@ class Hma:
     with ``length / 2`` truncated to an int (**unverified**; the capture probes floor vs
     round for both lengths)."""
 
-    def __init__(self, length: int, policy: str = "skip"):
+    def __init__(self, length: int, policy: str = "fill_na_out"):
         if length < 2:
             raise ValueError("hma length must be >= 2")
         self.half = Wma(length // 2, policy)
@@ -384,18 +406,41 @@ class PercentileLinear(_Windowed):
     the window). **Observed** on BATS:NFLX 1D (2026-11-05): the Hazen rank matched and the
     ``p(n − 1)`` (numpy default) and ``p(n + 1) − 1`` ranks did not."""
 
-    def __init__(self, length: int, percentage: float, policy: str = "skip"):
+    extra = EXTRA_NA_POLICIES["percentile_linear_interpolation"]
+
+    def __init__(self, length: int, percentage: float, policy: str = "fill_key"):
         if not 0 <= percentage <= 100:
             raise ValueError("percentage must be in [0, 100]")
         super().__init__(length, policy)
         self.p = percentage
+        self.keys = _Window(length)  # (sort key, is_na) per bar
+
+    def _rank(self, n: int) -> tuple[int, int, float]:
+        r = min(max(self.p / 100.0 * n - 0.5, 0.0), n - 1.0)
+        lo = math.floor(r)
+        return lo, min(lo + 1, n - 1), r - lo
 
     def _reduce(self, h: list[float]) -> float:
         s = sorted(h)
-        r = min(max(self.p / 100.0 * len(s) - 0.5, 0.0), len(s) - 1.0)
-        lo = math.floor(r)
-        hi = min(lo + 1, len(s) - 1)
-        return s[lo] + (r - lo) * (s[hi] - s[lo])
+        lo, hi, frac = self._rank(len(s))
+        return s[lo] + frac * (s[hi] - s[lo])
+
+    def update(self, x) -> float:
+        if self.policy != "fill_key":
+            return super().update(x)
+        x = _f(x)
+        own_na = math.isnan(x)
+        if not own_na:
+            self.last = x
+        self.keys.push((self.last, own_na))
+        if not self.keys.full or any(math.isnan(k) for k, _ in self.keys.h):
+            return NAN
+        # Sort by key; among equal keys real values come first (observed, NFLX row 53).
+        order = sorted(self.keys.h, key=lambda e: (e[0], e[1]))
+        lo, hi, frac = self._rank(len(order))
+        if order[lo][1] or (frac > 0 and order[hi][1]):
+            return NAN
+        return order[lo][0] + frac * (order[hi][0] - order[lo][0])
 
 
 class _Pivot:

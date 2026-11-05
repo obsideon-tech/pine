@@ -116,6 +116,38 @@ def _wma_fixed(x: np.ndarray, n: int, renorm: bool) -> np.ndarray:
     )
 
 
+def _ffill(x: np.ndarray) -> np.ndarray:
+    out, last = x.copy(), np.nan
+    for t, v in enumerate(x):
+        last = v if not np.isnan(v) else last
+        out[t] = last
+    return out
+
+
+def _wma_fill_ref(x: np.ndarray, n: int) -> np.ndarray:
+    """Observed wma `na` rule: window over the forward-filled source, `na` on `na` bars."""
+    out = _wma_ref(_ffill(x), n, "propagate")
+    return np.where(np.isnan(x), np.nan, out)
+
+
+def _pctl_fill_key_ref(x: np.ndarray, n: int) -> np.ndarray:
+    """Observed percentile `na` rule: `na` entries sort under the last valid value (after real
+    values with the same key); `na` if the Hazen interpolation touches one."""
+    keys, out = _ffill(x), np.full(x.size, np.nan)
+    for t in range(n - 1, x.size):
+        k, isna = keys[t - n + 1 : t + 1], np.isnan(x[t - n + 1 : t + 1])
+        if np.isnan(k).any():
+            continue
+        order = np.lexsort((isna, k))  # by key, then real (False) before na (True)
+        r = min(max(K["PCT"] / 100 * n - 0.5, 0.0), n - 1.0)
+        lo = int(np.floor(r))
+        hi, frac = min(lo + 1, n - 1), r - lo
+        if isna[order[lo]] or (frac > 0 and isna[order[hi]]):
+            continue
+        out[t] = k[order[lo]] + frac * (k[order[hi]] - k[order[lo]])
+    return out
+
+
 def _hma_ref(x: np.ndarray, n: int, half: str, root: str) -> np.ndarray:
     def rnd(v: float, how: str) -> int:
         return math.floor(v) if how == "floor" else math.floor(v + 0.5)
@@ -250,6 +282,7 @@ GROUPS: dict[str, dict[str, Hyp]] = {
     "wma_na": _policies(lambda b, p: {"bi_wma_na": _wma_ref(_src_na(b), L, p)})
     | {
         # Added after the first NFLX export matched none of the three policies (§12).
+        "fill_na_out": lambda b: {"bi_wma_na": _wma_fill_ref(_src_na(b), L)},
         "window_drop_renorm": lambda b: {"bi_wma_na": _wma_fixed(_src_na(b), L, True)},
         "window_nz": lambda b: {"bi_wma_na": _wma_fixed(_src_na(b), L, False)},
     },
@@ -284,9 +317,10 @@ GROUPS: dict[str, dict[str, Hyp]] = {
     },
     "percentile_na": _policies(lambda b, p: {"bi_pctl_na": _rolling(_src_na(b), L, p, _hazen)})
     | {
+        "fill_key": lambda b: {"bi_pctl_na": _pctl_fill_key_ref(_src_na(b), L)},
         "window_drop": lambda b: {
             "bi_pctl_na": _fixed_window(_src_na(b), L, lambda win, m: _hazen(win[m]))
-        }
+        },
     },
     "pivots": {
         rule: (

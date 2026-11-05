@@ -67,6 +67,18 @@ for _name, _f in REF.items():
     ]
 
 
+# Observed `na` rules (PINE_PLAN.md §12, 2026-11-05) change how "na -> 0" shows:
+# - wma (`fill_na_out`) is na on the gap bar, so a substituted 0 shows in the na mask there.
+# - percentile (`fill_key`) keeps a value on the gap bar. A 0 and the filled na entry both sort
+#   below the 30th-percentile rank on this fixture, so the results agree until the window
+#   puts the na entry on the rank (row 56): detection is data-dependent, as for `highest`.
+_NA_ZERO = {"wma": (NA_AT, "na"), "percentile": (56, "na")}
+CASES = [
+    (n, m, f, *_NA_ZERO[n], g) if m == "na -> 0" and n in _NA_ZERO else (n, m, f, b, d, g)
+    for n, m, f, b, d, g in CASES
+]
+
+
 @pytest.mark.parametrize(
     "name, mutation, mutant, bar, dtype, gap", CASES, ids=[f"{c[0]}-{c[1]}" for c in CASES]
 )

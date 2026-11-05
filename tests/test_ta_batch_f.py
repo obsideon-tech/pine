@@ -217,3 +217,37 @@ def test_runtime_equals_vectorised_bit_for_bit(seed, n, gaps):
     eq(r["cum"], ta.cum(x))
     eq(r["obv"], ta.obv(b.close, b.volume))
     eq(r["pvt"], ta.pvt(b.close, b.volume))
+
+
+# ---------- observed na rules (BATS:NFLX 1D export, rows 44-63, 2026-11-05) ----------
+
+NFLX_CLOSE = [4.8824237, 4.8184238, 4.8502809, 4.9785665, 4.9692807, 5.0034236, 5.0742806,
+              5.1784234, 5.2257091, 5.1988519, 5.184852, 5.0895663, 5.1151377, 5.0634235,
+              5.0809949, 5.1871377, 5.1997091, 5.3332804, 5.2709947, 5.2329948]  # fmt: skip
+# TradingView's ta.wma / ta.percentile_linear_interpolation(·, 10[, 30]) on the source with
+# rows 48-50 set to na, from the first row with a full 10-bar window in this excerpt (53).
+NFLX_WMA = [5.073561184, 5.105927387, 5.115470222, 5.124732538, 5.119776695, 5.116472796,
+            5.130605255, 5.143231218, 5.176122098, 5.194872724, 5.205890902]  # fmt: skip
+NFLX_PCTL = [4.9304951, NAN, NAN, NAN, NAN, 5.0722092, 5.0852806, 5.102352, 5.102352,
+             5.102352, 5.102352]  # fmt: skip
+
+
+def test_observed_na_rules_reproduce_tradingview():
+    src = np.array(NFLX_CLOSE)
+    src[4:7] = NAN
+    np.testing.assert_allclose(ta.wma(src, 10)[9:], NFLX_WMA, rtol=0, atol=1e-8)
+    np.testing.assert_allclose(
+        ta.percentile_linear_interpolation(src, 10, 30)[9:], NFLX_PCTL, rtol=0, atol=1e-8
+    )
+
+
+def test_fill_policies_are_specific_to_their_builtins():
+    x = np.arange(5.0)
+    with pytest.raises(ValueError, match="na_policy"):
+        ta.math_sum(x, 2, na_policy="fill_na_out")
+    with pytest.raises(ValueError, match="na_policy"):
+        ta.wma(x, 2, na_policy="fill_key")
+    # Every other policy remains available as an override.
+    for pol in ta.NA_POLICIES:
+        ta.wma(x, 2, na_policy=pol)
+        ta.percentile_linear_interpolation(x, 2, 30, na_policy=pol)
