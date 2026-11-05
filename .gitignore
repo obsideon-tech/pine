@@ -12,3 +12,6 @@ tests/fixtures/tradingview/
 .coverage
 .coverage.*
 htmlcov/
+
+# Private material (indicator sources, ports, exports): never committed to this public repo.
+/private/

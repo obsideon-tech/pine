@@ -380,8 +380,9 @@ class Variance(_Windowed):
 
 class PercentileLinear(_Windowed):
     """``ta.percentile_linear_interpolation(source, length, percentage)``: linear interpolation
-    between the sorted window values at rank ``p/100 * (n - 1)`` (numpy's default, Excel's
-    PERCENTILE.INC; **unverified**: the capture also tests the ``(n + 1)p`` and Hazen ranks)."""
+    between the sorted window values at the Hazen rank ``p/100 · n − ½`` (0-based, clamped to
+    the window). **Observed** on BATS:NFLX 1D (2026-11-05): the Hazen rank matched and the
+    ``p(n − 1)`` (numpy default) and ``p(n + 1) − 1`` ranks did not."""
 
     def __init__(self, length: int, percentage: float, policy: str = "skip"):
         if not 0 <= percentage <= 100:
@@ -391,7 +392,7 @@ class PercentileLinear(_Windowed):
 
     def _reduce(self, h: list[float]) -> float:
         s = sorted(h)
-        r = self.p / 100.0 * (len(s) - 1)
+        r = min(max(self.p / 100.0 * len(s) - 0.5, 0.0), len(s) - 1.0)
         lo = math.floor(r)
         hi = min(lo + 1, len(s) - 1)
         return s[lo] + (r - lo) * (s[hi] - s[lo])
@@ -399,9 +400,9 @@ class PercentileLinear(_Windowed):
 
 class _Pivot:
     """``ta.pivothigh/pivotlow(source, leftbars, rightbars)``: on the bar ``rightbars`` after a
-    pivot, the pivot's value; otherwise `na`. Tie rule (**unverified**, probed): strictly
-    beyond every left bar, at least as extreme as every right bar, so a flat top marks its
-    leftmost bar. Any `na` in the window gives `na`."""
+    pivot, the pivot's value; otherwise `na`. Tie rule, **observed** on BATS:NFLX 1D
+    (2026-11-05): at least as extreme as every left bar and strictly beyond every right bar,
+    so a flat top marks its *rightmost* bar. Any `na` in the window gives `na`."""
 
     sign = 1.0
 
@@ -419,7 +420,7 @@ class _Pivot:
         if any(math.isnan(v) for v in h):
             return NAN
         c = h[self.left]
-        if all(c > v for v in h[: self.left]) and all(c >= v for v in h[self.left + 1 :]):
+        if all(c >= v for v in h[: self.left]) and all(c > v for v in h[self.left + 1 :]):
             return self.w.h[self.left]
         return NAN
 
@@ -446,12 +447,12 @@ class Fixnan:
 
 
 class Cum:
-    """``ta.cum(source)``: running total. `na` handling per policy (**unverified**):
-    ``skip`` (default) ignores `na` (the total so far is returned on an `na` bar; `na` before
-    the first value), ``skip_na_out`` returns `na` on `na` bars, ``propagate`` stays `na`
+    """``ta.cum(source)``: running total. `na` handling per policy: ``skip_na_out`` (default,
+    **observed** on BATS:NFLX 1D 2026-11-05) returns `na` on `na` bars and carries the total
+    across them; ``skip`` returns the total so far on an `na` bar; ``propagate`` stays `na`
     from the first `na` on."""
 
-    def __init__(self, policy: str = "skip"):
+    def __init__(self, policy: str = "skip_na_out"):
         self.policy = _check(policy)
         self.total = NAN
         self.dead = False

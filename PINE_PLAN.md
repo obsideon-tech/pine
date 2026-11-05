@@ -1268,6 +1268,24 @@ symmetry), `path_basis = raw`. **Not decidable here:** `gap_fill` — on a 24/7 
 open equals the previous close, so no gap ever jumped a bracket level; needs an equity export
 (e.g. NFLX 1D) with the strategy script.
 
+### 2026-11-05 — BATS:NFLX 1D, reference + built-in + strategy captures (from bar 2849)
+
+3 304 rows. The semantics capture was not on the chart, so the loop probes remain open.
+
+| Item | Result |
+|---|---|
+| Core built-ins, `na` policies | **match** again (third NFLX daily confirmation of the `na` decision) |
+| `math.sum`, `wma`, `hma`, `variance`, `fixnan`, `cum`, `obv`, `pvt` (gap-free) | **match** as implemented; `hma` lengths floor(n/2), floor(√n) |
+| `na` handling | `sum`, `variance` → `skip`; **`cum` → `skip_na_out`** (implementation was `skip`; changed) |
+| `percentile_linear_interpolation` | **Hazen rank** `p·n − ½` (implementation used `p(n − 1)`; changed) |
+| `pivothigh` / `pivotlow` ties | **flat top marks its rightmost bar** (≥ left, > right; implementation had it reversed; changed) |
+| `wma` with `na` | **none of skip / skip_na_out / propagate**: na on the `na` bar but different values after. Two more hypotheses added (fixed window with `na` terms dropped, renormalised or not); re-run the checker on the same file |
+| `percentile` with `na` | not decidable yet: its hypotheses used the wrong rank; re-run on the same file |
+| `timeframe.from_seconds(90000)` | **none of** "1500" / "1D": more hypotheses added and the checker now prints the observed value |
+| `barstate`, `timeframe.*` constants, `in_seconds("1M")` = 2 628 003 | **match** (last bar was closed) |
+| `timeframe.change` on the first bar | not decidable (export starts mid-history) |
+| Strategy | all rules **match**; **`gap_fill = open` decided** (stops/limits gapped past fill at the open); `path_basis` not decidable here (already decided on DOGE) |
+
 ## 13. Strategy parity (`strategy.*`)
 
 Decided in scope on 2026-11-03 (§11 I). Goal: a Python port of a Pine strategy reproduces

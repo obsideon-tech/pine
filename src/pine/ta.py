@@ -50,17 +50,18 @@ DEFAULT_NA_POLICY: dict[str, str] = {
     "ema": "skip_na_out",
     "rma": "skip_na_out",
     "rsi": "skip_na_out",
-    # Batch F (PINE_PLAN.md §11 F): expected by analogy with the observed windowed built-ins,
-    # **unverified** until a `tools/capture_builtins.pine` export is checked.
+    # Batch F (PINE_PLAN.md §11 F). Observed on BATS:NFLX 1D (2026-11-05): sum and variance
+    # `skip`, cum `skip_na_out`. Still expected by analogy, not observed: wma, hma, and
+    # percentile (the NFLX export matched none of the three policies for wma and percentile).
     "sum": "skip",
     "wma": "skip",
     "hma": "skip",
     "variance": "skip",
     "percentile_linear_interpolation": "skip",
-    "cum": "skip",
+    "cum": "skip_na_out",
 }
 NA_POLICY_OBSERVED: frozenset[str] = frozenset(
-    ("sma", "stdev", "highest", "lowest", "ema", "rma", "rsi")
+    ("sma", "stdev", "highest", "lowest", "ema", "rma", "rsi", "sum", "variance", "cum")
 )
 """Built-ins whose `DEFAULT_NA_POLICY` entry is observed on a TradingView export (§12)."""
 
@@ -565,8 +566,8 @@ def variance(
 def percentile_linear_interpolation(
     source: ArrayLike, length: int, percentage: float, na_policy: NaPolicy | None = None
 ) -> np.ndarray:
-    """``ta.percentile_linear_interpolation``: rank ``p/100 * (n - 1)`` in the sorted window,
-    interpolated linearly."""
+    """``ta.percentile_linear_interpolation``: Hazen rank ``p/100 · n − ½`` in the sorted
+    window (clamped), interpolated linearly (observed, see `pine.runtime.builtins`)."""
     from pine.runtime import builtins as rb
 
     pol = _policy(na_policy, "percentile_linear_interpolation")
@@ -575,8 +576,8 @@ def percentile_linear_interpolation(
 
 def pivothigh(source: ArrayLike, leftbars: int, rightbars: int) -> np.ndarray:
     """``ta.pivothigh(source, leftbars, rightbars)``: the pivot's value on the bar
-    ``rightbars`` after it, else `na`. Ties: strictly above the left bars, at least as high as
-    the right bars."""
+    ``rightbars`` after it, else `na`. Ties (observed): at least as high as the left bars,
+    strictly above the right bars, so a flat top marks its rightmost bar."""
     from pine.runtime import builtins as rb
 
     return _stream(rb.Pivothigh(_length(leftbars), _length(rightbars)), source)
