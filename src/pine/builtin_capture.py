@@ -209,14 +209,18 @@ _BARSTATE = ("bi_isfirst", "bi_islast", "bi_ishistory", "bi_isrealtime", "bi_isn
              "bi_isconfirmed", "bi_islch")  # fmt: skip
 
 
-def _barstate_ref(b, live: bool) -> dict[str, np.ndarray]:
+def _barstate_ref(b, live: bool, realtime=None, new=None) -> dict[str, np.ndarray]:
+    """``live``: the last bar was still open at export. ``realtime`` / ``new``: its
+    ``isrealtime`` and ``isnew`` (default: realtime, not new, i.e. ticks arrived after load)."""
     n = len(b)
     g, last = _idx(b), np.arange(n) == n - 1
-    rt = last & live
+    open_ = last & live
+    rt = open_ & (True if realtime is None else realtime)
+    isnew = ~open_ | (open_ & bool(new))
     one = lambda m: m.astype(float)  # noqa: E731
     lch = np.arange(n) == (n - 2 if live else n - 1)
-    return dict(zip(_BARSTATE, (one(g == 0), one(last), one(~rt), one(rt), one(~rt), one(~rt),
-                                one(lch)), strict=True))  # fmt: skip
+    return dict(zip(_BARSTATE, (one(g == 0), one(last), one(~rt), one(rt), one(isnew),
+                                one(~open_), one(lch)), strict=True))  # fmt: skip
 
 
 def _tf_parts(tf: str) -> tuple[int, str]:
@@ -350,6 +354,11 @@ GROUPS: dict[str, dict[str, Hyp]] = {
     "barstate": {
         "closed_last": lambda b: _barstate_ref(b, live=False),
         "live_last": lambda b: _barstate_ref(b, live=True),
+        # Added after BATS:NFLX 1W (2026-11-05): last weekly bar still open, market closed at
+        # export; neither state above matched. Not implemented in the runtime until decided.
+        "live_unticked": lambda b: _barstate_ref(b, live=True, new=True),
+        "open_historical": lambda b: _barstate_ref(b, live=True, realtime=False, new=True),
+        "open_historical_not_new": lambda b: _barstate_ref(b, live=True, realtime=False),
     },
     "timeframe": {
         "v6_spelling": lambda b: _tf_ref(b, "v6"),
@@ -417,7 +426,7 @@ EXPECTED: dict[str, str] = {
     "timeframe": "v6_spelling",
     "in_seconds": "month_2628003",
     "from_seconds": "ceil_day",  # observed 2026-11-05 (NFLX 1D): 90 000 s -> "2D"
-    "tf_change": "first_bar_true",
+    "tf_change": "first_bar_false",  # observed 2026-11-05 (NFLX 1W, from bar 0)
 }
 
 # Groups whose value at a row is a running total over all earlier bars.
@@ -571,7 +580,7 @@ def decide(export: TradingViewExport, input_rounding: float | None = None) -> li
         matching = tuple(h for h, r in reports.items() if r.passed)
         expected = EXPECTED[group]
         note = ""
-        if group == "barstate" and len(matching) == 1:
+        if group == "barstate" and matching in (("closed_last",), ("live_last",)):
             # Both states are implemented (run(..., live_last_bar=...)); report which it was.
             expected = matching[0]
             note = "last bar was " + ("live" if expected == "live_last" else "closed")

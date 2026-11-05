@@ -12,8 +12,9 @@ probe group in `pine.builtin_capture`):
   a day or more is rounded *up* to whole days rather than spelled in minutes. Exact weeks
   and months, and counts under a day, are by inference.
 - ``timeframe.change(tf)``: true on the first bar of each new ``tf`` period (``D``, ``W``,
-  ``M``; weeks start on Monday), dated in the exchange time zone, and true on the chart's
-  first bar. Intraday targets (``"60"``) need session anchoring (§11 G1) and are refused.
+  ``M``; weeks start on Monday), dated in the exchange time zone. **Observed** (BATS:NFLX
+  1W, 2026-11-05): false on the chart's first bar. Intraday targets (``"60"``) need session
+  anchoring (§11 G1) and are refused.
 - ``barstate.*`` on the last bar depends on whether it was live when the export was taken
   (`BarState` ``live_last``): a live bar is realtime, not confirmed, not new (later ticks), and
   the bar before it is the last confirmed historical one.
@@ -138,7 +139,7 @@ def period_ids(bars: Bars, tf: str) -> list[tuple[int, ...]]:
     return [(d.year, d.month) for d in dates]
 
 
-def change(bars: Bars, tf: str, first_bar: bool = True) -> np.ndarray:
+def change(bars: Bars, tf: str, first_bar: bool = False) -> np.ndarray:
     """``timeframe.change(tf)`` on every bar: the bar starts a new ``tf`` period."""
     ids = period_ids(bars, tf)
     out = np.array([i > 0 and ids[i] != ids[i - 1] for i in range(len(ids))], dtype=bool)

@@ -1307,6 +1307,20 @@ new built-in needs its own `na` column. The excerpt's 20 closes and TradingView'
 committed as a regression test (numbers only, as for the DOGE strategy rows). `hma` is built
 from `wma` and follows it by analogy, unverified.
 
+### 2026-11-05 — BATS:NFLX 1W, all four captures (from bar 0)
+
+1 277 rows, aligned mode throughout.
+
+| Item | Result |
+|---|---|
+| Core built-ins, `na` policies, the 20 original semantics groups | **match** again |
+| **Calls inside `for` loops** (`loop_builtin`, `loop_userfn`) | **`per_bar_last`**: a call site in a loop keeps one history entry per bar, the last iteration's (`math.sum(x, 2)` in the loop = current input + previous bar's last input; `x[1]` = previous bar's last value). `per_call` (the runtime's guess) and `per_iteration` did not match. **Runtime changed** (`ctx.loop` restores each site to its start-of-bar state on every call after the first) |
+| `timeframe.change` on the chart's first bar | **false** (`first_bar_false`; implementation was true; changed) |
+| Batch-F built-ins incl. `wma` `na` rule, `from_seconds`, `in_seconds`, `timeframe` | **match** (second export) |
+| `percentile` with `na` | `fill_key` **fails** at row 52 (it matched every comparable row of the daily export): the rule is not yet right in some case; needs the `rows` output |
+| `barstate` on the last bar | **neither** closed nor live: the last weekly bar was still open but the market was closed at export (`varip` saw no ticks). `isconfirmed` = 0 there and `islastconfirmedhistory` on the bar before. Three more hypotheses added (realtime/not, new/not); needs the `rows` output |
+| Strategy | **not checked**: run without `--mintick` (my command omitted it), so tick rounding was off; the failures match the pre-rounding pattern of the first DOGE run. Re-check with `--mintick 0.01` |
+
 ## 13. Strategy parity (`strategy.*`)
 
 Decided in scope on 2026-11-03 (§11 I). Goal: a Python port of a Pine strategy reproduces

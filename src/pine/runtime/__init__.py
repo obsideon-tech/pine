@@ -26,6 +26,7 @@ one bar raises `DuplicateKeyError` (catches copy-paste); inside Python loops use
 
 from __future__ import annotations
 
+import copy
 import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -99,14 +100,25 @@ class _TA:
 
     def _state(self, key: str, cls, *args):
         full = self._ctx._claim("ta", key)
-        node = self._ctx._nodes.get(full)
+        ctx = self._ctx
+        node = ctx._nodes.get(full)
         if node is None:
             node = cls(*args)
-            self._ctx._nodes[full] = node
+            ctx._nodes[full] = node
         elif type(node) is not cls:
             raise DuplicateKeyError(
                 f"key {key!r} used for {type(node).__name__} and {cls.__name__}"
             )
+        if ctx._loop_depth:
+            # Inside a loop the site runs several times per bar; its history keeps only the
+            # bar's last call (observed). Each call therefore starts from the state the bar
+            # began with: restore that snapshot on every call after the first.
+            seen = ctx._touched.get(full)
+            if seen is not None and seen[0] == ctx.i:
+                node.__dict__.clear()
+                node.__dict__.update(copy.deepcopy(seen[1]))
+            else:
+                ctx._touched[full] = (ctx.i, copy.deepcopy(node.__dict__))
         return node
 
     # ``na_policy=None`` means the observed default (`pine.ta.DEFAULT_NA_POLICY`).
@@ -230,7 +242,9 @@ class _TimeframeView:
         if ids is None:
             ids = self._ids[tf] = _chart.period_ids(self._ctx.bars, tf)
         i = self._ctx.i
-        return i == 0 or ids[i] != ids[i - 1]
+        # False on the first bar (observed); on the first row of a truncated export the
+        # previous bar is unknown, and False is returned there too.
+        return i > 0 and ids[i] != ids[i - 1]
 
 
 class Context:
@@ -259,6 +273,9 @@ class Context:
         self._nodes: dict[str, object] = {}
         self._used: set[str] = set()
         self._prefix = ""
+        self._loop_depth = 0
+        self._touched: dict[str, tuple[int, dict]] = {}  # loop sites: bar, start-of-bar state
+        self._declared: dict[str, int] = {}  # series/var key -> last bar declared
         self._plots: dict[str, np.ndarray] = {}
 
     # -- bookkeeping ----------------------------------------------------------------------
@@ -299,7 +316,11 @@ class Context:
         if s is None:
             s = Series(self.max_bars_back)
             self._nodes[full] = s
-        s._push(init)
+        if self._loop_depth and self._declared.get(full) == self.i:
+            s._h[-1] = _f(init)  # repeated in a loop: one history entry per bar (the last)
+        else:
+            s._push(init)
+        self._declared[full] = self.i
         return s
 
     def var(self, key: str, init=NA) -> Series:
@@ -310,8 +331,9 @@ class Context:
             s = Series(self.max_bars_back)
             self._nodes[full] = s
             s._push(init)
-        else:
+        elif not (self._loop_depth and self._declared.get(full) == self.i):
             s._push(s.value)
+        self._declared[full] = self.i
         return s
 
     def call(self, key: str, fn: Callable, *args, **kwargs):
@@ -327,15 +349,18 @@ class Context:
     def loop(self, key: str, iterable: Iterable):
         """Pine ``for`` loop body: ``for i in ctx.loop("k", range(1, 4)): ...``.
 
-        Inside the body, keys may repeat from one iteration to the next, and every call site
-        in the body keeps **one** state shared by all iterations: a built-in advances on every
-        call (``n`` times per bar for ``n`` iterations) and ``s[1]`` of a series declared in
-        the body is its value from the previous *iteration*. That is hypothesis ``per_call``
-        of the ``loop_*`` groups in `pine.semantics` (**unverified** until an export is
-        checked). Leaving the loop with ``break`` is fine (the generator is closed)."""
+        Inside the body, keys may repeat from one iteration to the next. Every call site in
+        the body has one state, and its history keeps **one entry per bar: the value from the
+        bar's last iteration**. So each call sees the history as of the previous bar plus its
+        own current input: ``math.sum(x, 2)`` in the loop is ``x + x_last[1]``, and ``s[1]``
+        of a series declared in the body is the previous bar's last value, whatever the
+        iteration. **Observed** (hypothesis ``per_bar_last`` of the ``loop_*`` groups in
+        `pine.semantics`, BATS:NFLX 1W, 2026-11-05); ``per_call`` and ``per_iteration`` did
+        not match. Leaving the loop with ``break`` is fine (the generator is closed)."""
         full = self._claim("l", key)
         outer = self._prefix
         inner = full + "/"
+        self._loop_depth += 1
         try:
             for item in iterable:
                 self._used = {u for u in self._used if not u.startswith(inner)}
@@ -344,6 +369,7 @@ class Context:
                 self._prefix = outer
         finally:
             self._prefix = outer
+            self._loop_depth -= 1
 
     def plot(self, name: str, value) -> None:
         self._claim("p", name)

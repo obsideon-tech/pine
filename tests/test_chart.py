@@ -76,9 +76,10 @@ def test_timeframe_flags(tf, flags):
 def test_change_weeks_and_months_daily_midnight_utc():
     # Fri 2026-01-30, Mon 02-02 (new week and month), Tue 02-03, Mon 02-09 (new week).
     b = _bars(_ts((2026, 1, 30), (2026, 2, 2), (2026, 2, 3), (2026, 2, 9)), tz="America/New_York")
-    assert chart.change(b, "1W").tolist() == [True, True, False, True]
-    assert chart.change(b, "1M").tolist() == [True, True, False, False]
-    assert chart.change(b, "1W", first_bar=False)[0] == np.False_
+    # False on the chart's first bar (observed, NFLX 1W 2026-11-05).
+    assert chart.change(b, "1W").tolist() == [False, True, False, True]
+    assert chart.change(b, "1M").tolist() == [False, True, False, False]
+    assert chart.change(b, "1W", first_bar=True)[0] == np.True_
 
 
 def test_change_intraday_uses_exchange_dates():
@@ -92,8 +93,8 @@ def test_change_intraday_uses_exchange_dates():
     ts = [int(dt.datetime(*t, tzinfo=ny).timestamp()) for t in local]
     assert dt.datetime.fromtimestamp(ts[0], dt.UTC).weekday() == 0  # Monday in UTC
     b = _bars(ts, tf="60", tz="America/New_York")
-    assert chart.change(b, "1W").tolist() == [True, False, True]
-    assert chart.change(b, "1D").tolist() == [True, False, True]
+    assert chart.change(b, "1W").tolist() == [False, False, True]
+    assert chart.change(b, "1D").tolist() == [False, False, True]
 
 
 def test_change_refuses_intraday_targets():
@@ -127,7 +128,7 @@ def test_runtime_views():
         ctx.plot("rt", ctx.barstate.isrealtime)
 
     r = run(script, b, live_last_bar=True, bar_offset=0)
-    assert r["week"].tolist() == [1, 1, 0] and (r["daily"] == 1).all()
+    assert r["week"].tolist() == [0, 1, 0] and (r["daily"] == 1).all()
     assert (r["secs"] == 3600).all() and (r["from"] == 5400).all()
     assert r["first"].tolist() == [1, 0, 0] and r["rt"].tolist() == [0, 0, 1]
 
