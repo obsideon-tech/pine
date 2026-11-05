@@ -343,7 +343,7 @@ decisions:
     notes: either last-bar state is accepted and reported (run(..., live_last_bar=...))
   builtins.timeframe: {expected: v6_spelling, tradingview: [nflx_1d_b]}
   builtins.in_seconds: {expected: month_2628003, tradingview: [nflx_1d_b]}
-  builtins.from_seconds: {expected: exact_unit, tradingview: []}
+  builtins.from_seconds: {expected: ceil_day, tradingview: [nflx_1d_b]}
   builtins.tf_change:
     expected: first_bar_true
     tradingview: []

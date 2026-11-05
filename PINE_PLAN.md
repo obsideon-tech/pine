@@ -1286,6 +1286,13 @@ open equals the previous close, so no gap ever jumped a bracket level; needs an 
 | `timeframe.change` on the first bar | not decidable (export starts mid-history) |
 | Strategy | all rules **match**; **`gap_fill = open` decided** (stops/limits gapped past fill at the open); `path_basis` not decidable here (already decided on DOGE) |
 
+**Re-check of the same file with the extra hypotheses:** `percentile` → **Hazen** confirmed;
+`timeframe.from_seconds(90000)` → **"2D"** (`ceil_day`: a day or more rounds *up* to whole
+days; implemented). `wma` and `percentile` with `na` still match **none** of five / four
+hypotheses. Rather than guess again, `python -m pine.capture rows <csv> --group wma_na
+--from 40` now prints TradingView's values next to every hypothesis around a row, so the
+rule can be read off the data.
+
 ## 13. Strategy parity (`strategy.*`)
 
 Decided in scope on 2026-11-03 (§11 I). Goal: a Python port of a Pine strategy reproduces

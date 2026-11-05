@@ -253,6 +253,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     m.add_argument("--force", action="store_true", help="overwrite an existing manifest")
 
+    r = sub.add_parser(
+        "rows", help="print a built-in group's rows: TradingView next to every hypothesis"
+    )
+    r.add_argument("csv")
+    r.add_argument("--group", required=True, help="e.g. wma_na (a row of the Built-ins table)")
+    r.add_argument("--from", dest="start", type=int, required=True, help="first row")
+    r.add_argument("--count", type=int, default=20)
+    r.add_argument("--manifest", help="default: <csv>.yaml next to the export")
+
     c = sub.add_parser("check", help="run every check the export supports")
     c.add_argument("csv")
     c.add_argument("--manifest", help="default: <csv>.yaml next to the export")
@@ -282,6 +291,12 @@ def main(argv: list[str] | None = None) -> int:
                 mintick=args.mintick,
             )
             print(f"wrote {path}\nnext: uv run python -m pine.capture check {args.csv}")
+            return 0
+
+        if args.cmd == "rows":
+            csv = Path(args.csv)
+            exp, _ = load_export(csv, args.manifest or csv.with_suffix(".yaml"), None, None)
+            print(builtin_capture.diagnose(exp, args.group, args.start, args.count))
             return 0
 
         csv = Path(args.csv)

@@ -382,7 +382,7 @@ EXPECTED: dict[str, str] = {
     "barstate": "closed_last",
     "timeframe": "v6_spelling",
     "in_seconds": "month_2628003",
-    "from_seconds": "exact_unit",
+    "from_seconds": "ceil_day",  # observed 2026-11-05 (NFLX 1D): 90 000 s -> "2D"
     "tf_change": "first_bar_true",
 }
 
@@ -563,3 +563,40 @@ def decide(export: TradingViewExport, input_rounding: float | None = None) -> li
 
 def summary(decisions: list[GroupDecision]) -> str:
     return _summary(decisions, title="Built-ins (batch F)")
+
+
+def diagnose(export: TradingViewExport, group: str, start: int, count: int = 20) -> str:
+    """Rows ``start .. start + count - 1`` of one group side by side: the inputs, what
+    TradingView exported, and every hypothesis. For groups where no hypothesis matches, this
+    shows *how* TradingView differs, so the next hypothesis is read off the data."""
+    if group not in GROUPS:
+        raise KeyError(f"unknown group {group!r}; groups: {', '.join(GROUPS)}")
+    k = bar_offset(export.columns, "bi_bar_index") or 0
+    b = _At(export.bars, k, export.columns)
+    n = len(export.bars)
+    if not 0 <= start < n:
+        raise ValueError(f"start must be in 0..{n - 1}")
+    rows = range(start, min(start + max(count, 1), n))
+    hyps = {h: f(b) for h, f in GROUPS[group].items()}
+    cols = list(next(iter(hyps.values())))
+
+    def fmt(v) -> str:
+        return "na" if v is None or (isinstance(v, float) and math.isnan(v)) else f"{v:.10g}"
+
+    src = _src_na(b)
+    header = ["row", "bar_index", "close", "src_na"]
+    for c in cols:
+        header += [f"{c} (TradingView)", *(f"{h}" for h in hyps)]
+    out = [
+        f"### `{group}`: rows {rows.start}-{rows.stop - 1}",
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + "---|" * len(header),
+    ]
+    for r in rows:
+        cells = [str(r), str(k + r), fmt(float(b.close[r])), fmt(float(src[r]))]
+        for c in cols:
+            cells.append(fmt(float(export.columns[c][r])))
+            cells += [fmt(float(hyps[h][c][r])) for h in hyps]
+        out.append("| " + " | ".join(cells) + " |")
+    return "\n".join(out) + "\n"

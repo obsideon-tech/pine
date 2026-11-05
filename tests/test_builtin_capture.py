@@ -122,7 +122,7 @@ def test_runtime_export_decides_every_group_as_expected(bars, cols, tmp_path):
     "group, alt",
     [("pivots", "left_strict"), ("hma", "half_round_sqrt_round"), ("cum_na", "skip"),
      ("percentile", "inclusive"), ("variance", "sample"), ("wma_na", "window_drop_renorm"),
-     ("from_seconds", "ceil_day")],
+     ("from_seconds", "exact_unit")],
 )  # fmt: skip
 def test_alternative_is_detected_and_named(bars, cols, tmp_path, group, alt):
     c = dict(cols) | GROUPS[group][alt](bars)

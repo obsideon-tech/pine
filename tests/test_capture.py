@@ -133,3 +133,17 @@ def test_bar_offset_messages():
         bar_offset({"x": np.array([0.0, 1.0, 5.0])}, "x")
     with pytest.raises(ValueError, match="first value -1"):
         bar_offset({"bar_index": np.array([-1.0, 0.0])})
+
+
+def test_rows_prints_tradingview_next_to_hypotheses(tmp_path, capsys):
+    csv = combined_export(tmp_path)
+    main(["manifest", str(csv), *ARGS])
+    capsys.readouterr()
+    assert main(["rows", str(csv), "--group", "wma_na", "--from", "45", "--count", "5"]) == 0
+    out = capsys.readouterr().out
+    assert "### `wma_na`: rows 45-49" in out
+    assert "bi_wma_na (TradingView)" in out and "window_drop_renorm" in out
+    assert out.count("\n| 4") == 5  # five data rows (45..49)
+    assert main(["rows", str(csv), "--group", "nope", "--from", "0"]) == 2
+    assert "unknown group" in capsys.readouterr().err
+    assert main(["rows", str(csv), "--group", "wma_na", "--from", "99999"]) == 2

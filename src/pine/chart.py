@@ -8,8 +8,9 @@ probe group in `pine.builtin_capture`):
 
 - ``timeframe.in_seconds("1M")``: a month counted as 2 628 003 s (30.4167 days, the value the
   Pine manual's examples show, as recalled); alternatives 30 days and the mean Gregorian month.
-- ``timeframe.from_seconds``: the largest unit that divides the count exactly (90 000 s ->
-  "1500" minutes, not "1D").
+- ``timeframe.from_seconds``: **observed** (NFLX 1D, 2026-11-05) that 90 000 s gives "2D":
+  a day or more is rounded *up* to whole days rather than spelled in minutes. Exact weeks
+  and months, and counts under a day, are by inference.
 - ``timeframe.change(tf)``: true on the first bar of each new ``tf`` period (``D``, ``W``,
   ``M``; weeks start on Monday), dated in the exchange time zone, and true on the chart's
   first bar. Intraday targets (``"60"``) need session anchoring (§11 G1) and are refused.
@@ -60,13 +61,17 @@ def in_seconds(tf: str, month_seconds: int = MONTH_SECONDS) -> int:
 
 
 def from_seconds(seconds: int) -> str:
-    """``timeframe.from_seconds``: the largest unit dividing ``seconds`` exactly."""
+    """``timeframe.from_seconds``. From a day up: whole months or weeks if exact, otherwise
+    days rounded **up** (90 000 s -> "2D", observed). Under a day: minutes if exact, else
+    seconds."""
     if isinstance(seconds, bool) or int(seconds) != seconds or seconds <= 0:
         raise ValueError("seconds must be a positive integer")
     s = int(seconds)
-    for unit in ("M", "W", "D"):
-        if s % _UNIT[unit] == 0:
-            return f"{s // _UNIT[unit]}{unit}"
+    if s >= _UNIT["D"]:
+        for unit in ("M", "W"):
+            if s % _UNIT[unit] == 0:
+                return f"{s // _UNIT[unit]}{unit}"
+        return f"{-(-s // _UNIT['D'])}D"
     return str(s // 60) if s % 60 == 0 else f"{s}S"
 
 
