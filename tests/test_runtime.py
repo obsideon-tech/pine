@@ -296,7 +296,9 @@ def test_max_bars_back_validated():
 # ---------- for loops (ctx.loop) ----------
 
 
-def test_loop_call_site_shared_across_iterations():
+def test_loop_history_keeps_the_last_iteration_per_bar():
+    """Observed (NFLX 1W, 2026-11-05): a call site in a loop keeps one history entry per bar,
+    the bar's last iteration (hypothesis ``per_bar_last`` in pine.semantics)."""
     b = _bars(1, n=30)
 
     def script(ctx):
@@ -312,13 +314,28 @@ def test_loop_call_site_shared_across_iterations():
 
     r = run(script, b)
     c = b.close
-    # One state for the site: the window holds the last two *calls*.
-    np.testing.assert_allclose(r["first_sum"][1:], 3 * c[:-1] + c[1:])
-    np.testing.assert_allclose(r["last_sum"], 5 * c)
-    assert np.isnan(r["first_sum"][0])
-    # Series history inside the body is per iteration.
+    # Each call: its own input plus the previous bar's last-iteration input (3·close[1]).
+    np.testing.assert_allclose(r["first_sum"][1:], c[1:] + 3 * c[:-1])
+    np.testing.assert_allclose(r["last_sum"][1:], 3 * c[1:] + 3 * c[:-1])
+    assert np.isnan(r["first_sum"][0]) and np.isnan(r["last_sum"][0])
+    # s[1] in the body is the previous bar's last value, whatever the iteration.
     assert np.isnan(r["first_prev"][0]) and (r["first_prev"][1:] == 3.0).all()
-    assert (r["last_prev"] == 2.0).all()
+    assert np.isnan(r["last_prev"][0]) and (r["last_prev"][1:] == 3.0).all()
+
+
+def test_var_in_a_loop_advances_once_per_bar():
+    b = _bars(5, n=6)
+
+    def script(ctx):
+        for _ in ctx.loop("lp", range(3)):
+            v = ctx.var("v", 0.0)
+            v.set(v.value + 1)
+        ctx.plot("v", v.value)
+        ctx.plot("v1", v[1])
+
+    r = run(script, b)
+    assert r["v"].tolist() == [3, 6, 9, 12, 15, 18]  # the value carries across iterations
+    assert np.isnan(r["v1"][0]) and r["v1"][1:].tolist() == [3, 6, 9, 12, 15]  # one per bar
 
 
 def test_loop_keys_unique_per_iteration_and_outside():
@@ -372,6 +389,6 @@ def test_nested_loops_and_calls_in_loops():
         ctx.plot("tot", tot)
 
     r = run(script, b)
-    # Calls in order 0,1,2,3 every bar; each adds the previous call's value (3 on bar t > 0).
-    assert r["tot"][0] == 0 + 1 + 3 + 5
-    assert (r["tot"][1:] == 3 + 1 + 3 + 5).all()
+    # Calls 0, 1, 2, 3 every bar; s[1] is the previous bar's last call (3) for all of them.
+    assert r["tot"][0] == 0 + 1 + 2 + 3
+    assert (r["tot"][1:] == (0 + 3) + (1 + 3) + (2 + 3) + (3 + 3)).all()

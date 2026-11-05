@@ -406,10 +406,9 @@ EXPECTED: dict[str, str] = {
     "supertrend": "manual_code",
     "trail_stop": "port",
     "regime": "per_call",
-    # Expected by extension of the observed per-call rule for conditional calls (§12);
-    # **unverified** until an export with the loop probes is checked.
-    "loop_builtin": "per_call",
-    "loop_userfn": "per_call",
+    # Observed on BATS:NFLX 1W (2026-11-05): one history entry per bar, the last iteration's.
+    "loop_builtin": "per_bar_last",
+    "loop_userfn": "per_bar_last",
 }
 
 COLUMNS: tuple[str, ...] = (

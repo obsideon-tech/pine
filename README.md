@@ -141,44 +141,44 @@ manifest describing how it was produced; see `src/pine/manifest.py`.
 
 Generated from [`src/pine/verification.yaml`](src/pine/verification.yaml); **verified** means at least one TradingView export confirmed it.
 
-Exports: `nflx_1d` BATS:NFLX 1D (from bar 3116); `nflx_1w` BATS:NFLX 1W (from bar 0); `doge_1d` BINANCE:DOGEUSDT 1D (from bar 0); `btc_1d` BITSTAMP:BTCUSD 1D (from bar 2662); `aapl_60` BATS:AAPL 60 (from bar 17845); `nflx_1d_b` BATS:NFLX 1D (from bar 2849); `doge_1d_strategy` BINANCE:DOGEUSDT 1D (from bar 0).
+Exports: `nflx_1d` BATS:NFLX 1D (from bar 3116); `nflx_1w` BATS:NFLX 1W (from bar 0); `doge_1d` BINANCE:DOGEUSDT 1D (from bar 0); `btc_1d` BITSTAMP:BTCUSD 1D (from bar 2662); `aapl_60` BATS:AAPL 60 (from bar 17845); `nflx_1d_b` BATS:NFLX 1D (from bar 2849); `nflx_1w_b` BATS:NFLX 1W (from bar 0); `doge_1d_strategy` BINANCE:DOGEUSDT 1D (from bar 0).
 
 | built-in | runtime | status | TradingView exports | rounding bound | bug tests |
 |---|---|---|---|---|---|
-| `ta.sma` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.ema` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.rma` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.rsi` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.stdev` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.highest` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.lowest` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.tr` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.atr` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | yes | yes |
-| `ta.crossover` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | none | yes |
-| `ta.crossunder` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b | none | yes |
-| `ta.change` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
-| `ta.barssince` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
-| `ta.valuewhen` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
-| `ta.supertrend` | — | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60 | none | yes |
-| `math.sum` | yes | verified | nflx_1d_b | yes | yes |
-| `ta.wma` | yes | verified | nflx_1d_b | yes | yes |
-| `ta.hma` | yes | verified | nflx_1d_b | yes | yes |
-| `ta.variance` | yes | verified | nflx_1d_b | yes | yes |
-| `ta.percentile_linear_interpolation` | yes | verified | nflx_1d_b | yes | yes |
-| `ta.pivothigh` | yes | verified | nflx_1d_b | none | yes |
-| `ta.pivotlow` | yes | verified | nflx_1d_b | none | yes |
-| `fixnan` | yes | verified | nflx_1d_b | yes | yes |
-| `ta.cum` | yes | verified | nflx_1d_b | yes | yes |
-| `ta.obv` | yes | verified | nflx_1d_b | yes | yes |
-| `ta.pvt` | yes | verified | nflx_1d_b | yes | yes |
+| `ta.sma` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.ema` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.rma` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.rsi` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.stdev` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.highest` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.lowest` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.tr` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.atr` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.crossover` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | none | yes |
+| `ta.crossunder` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1d_b, nflx_1w_b | none | yes |
+| `ta.change` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1w_b | none | yes |
+| `ta.barssince` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1w_b | none | yes |
+| `ta.valuewhen` | yes | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1w_b | none | yes |
+| `ta.supertrend` | — | verified | nflx_1d, nflx_1w, doge_1d, btc_1d, aapl_60, nflx_1w_b | none | yes |
+| `math.sum` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.wma` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.hma` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.variance` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.percentile_linear_interpolation` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.pivothigh` | yes | verified | nflx_1d_b, nflx_1w_b | none | yes |
+| `ta.pivotlow` | yes | verified | nflx_1d_b, nflx_1w_b | none | yes |
+| `fixnan` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.cum` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.obv` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
+| `ta.pvt` | yes | verified | nflx_1d_b, nflx_1w_b | yes | yes |
 
 | execution rules | verified | capture ready |
 |---|---|---|
-| semantics | 20 of 22 | 2 |
-| builtins | 20 of 21 | 1 |
+| semantics | 22 of 22 | 0 |
+| builtins | 21 of 21 | 0 |
 | strategy | 8 of 8 | 0 |
 
-Awaiting an export: `semantics.loop_builtin`, `semantics.loop_userfn`, `builtins.tf_change`.
+Awaiting an export: .
 
 <!-- verification-table:end -->
 
