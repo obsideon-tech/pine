@@ -699,6 +699,17 @@ Priority tags are `[high]`, `[med]`, `[low]`; they are unrelated to phases P0–
         `tests/test_mutation_batch_f.py`, 30 cases, every one caught at the predicted bar);
         `--inputs-rounded` now applies to the built-in capture too. **Remaining: an export;
         the rest of batch 1.**
+      - _Progress 2026-11-05:_ `timeframe.*` and `barstate.*` (`pine.chart`; `ctx.timeframe`,
+        `ctx.barstate`, `run(..., live_last_bar=...)`), probed by 15 new columns in
+        `tools/capture_builtins.pine` (5 groups). Open points, each a hypothesis set:
+        seconds per month (2 628 003 expected), `from_seconds` choosing the largest exact unit,
+        `timeframe.period` spelled `"1D"` (v6) not `"D"`, `timeframe.change` true on the
+        chart's first bar with weeks from Monday in the exchange time zone, and the last bar's
+        `barstate` (live or closed; both implemented, the check reports which).
+        `timeframe.change` supports 1D/1W/1M targets only; intraday targets need session
+        anchoring (G1). Lint observation while adding them: `barstate-realtime` flags
+        `islast`, `isrealtime`, `isnew` but not `ishistory` or `islastconfirmedhistory`,
+        which also differ on the realtime bar (a C-section blind spot to fix).
 - [x] **[med] H2 — Verification registry** (§11 H2)
       - _Raised:_ 2026-11-03
       - _Why:_ "verified" must be a recorded, checkable state per built-in, not prose.

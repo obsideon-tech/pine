@@ -47,6 +47,9 @@ COLUMNS: tuple[str, ...] = (
     "bi_bar_index", "bi_volume", "bi_sum", "bi_sum_na", "bi_wma", "bi_wma_na", "bi_hma_odd",
     "bi_hma_nonsquare", "bi_variance", "bi_variance_na", "bi_pctl", "bi_pctl_na",
     "bi_pivothigh", "bi_pivotlow", "bi_fixnan", "bi_cum", "bi_cum_na", "bi_obv", "bi_pvt",
+    "bi_isfirst", "bi_islast", "bi_ishistory", "bi_isrealtime", "bi_isnew", "bi_isconfirmed",
+    "bi_islch", "bi_tf_mult", "bi_tf_flags", "bi_tf_period_len", "bi_tf_secs", "bi_secs_month",
+    "bi_from_secs_25h", "bi_chg_week", "bi_chg_month",
 )  # fmt: skip
 
 
@@ -143,6 +146,78 @@ def _close(b) -> np.ndarray:
     return np.asarray(b.close, dtype=float)
 
 
+# ------------------------------------------------------------------ barstate / timeframe
+# Independent of pine.chart: plain integer arithmetic on the true bar index and timestamps.
+
+_BARSTATE = ("bi_isfirst", "bi_islast", "bi_ishistory", "bi_isrealtime", "bi_isnew",
+             "bi_isconfirmed", "bi_islch")  # fmt: skip
+
+
+def _barstate_ref(b, live: bool) -> dict[str, np.ndarray]:
+    n = len(b)
+    g, last = _idx(b), np.arange(n) == n - 1
+    rt = last & live
+    one = lambda m: m.astype(float)  # noqa: E731
+    lch = np.arange(n) == (n - 2 if live else n - 1)
+    return dict(zip(_BARSTATE, (one(g == 0), one(last), one(~rt), one(rt), one(~rt), one(~rt),
+                                one(lch)), strict=True))  # fmt: skip
+
+
+def _tf_parts(tf: str) -> tuple[int, str]:
+    digits = "".join(ch for ch in tf if ch.isdigit())
+    return int(digits or 1), tf[len(digits) :]
+
+
+def _tf_ref(b, spelling: str) -> dict[str, np.ndarray]:
+    mult, unit = _tf_parts(b.timeframe)
+    flags = (unit == "S") * 1 + (unit == "") * 2 + (unit in ("S", "")) * 4 + (unit == "D") * 8
+    flags += (unit == "W") * 16 + (unit == "M") * 32 + (unit in ("D", "W", "M")) * 64
+    secs = mult * {"S": 1, "": 60, "D": 86_400, "W": 604_800, "M": 2_628_003}[unit]
+    bare = spelling == "bare" and mult == 1 and unit in ("D", "W", "M")
+    period = unit if bare else f"{mult}{unit}"
+    n = len(b)
+    return {
+        "bi_tf_mult": np.full(n, float(mult)),
+        "bi_tf_flags": np.full(n, float(flags)),
+        "bi_tf_period_len": np.full(n, float(len(period))),
+        "bi_tf_secs": np.full(n, float(secs)),
+    }
+
+
+def _local_days(b) -> np.ndarray:
+    """Days since 1970-01-01 of each bar's date in the exchange time zone (UTC for daily-or-
+    higher bars stamped at midnight UTC)."""
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+
+    ts = np.asarray(b.ts, dtype=np.int64)
+    _, unit = _tf_parts(b.timeframe)
+    if unit in ("D", "W", "M") and ts.size and not (ts % 86_400).any():
+        return ts // 86_400
+    tz = ZoneInfo(b.session_tz)
+    off = np.array([dt.datetime.fromtimestamp(int(t), tz).utcoffset().total_seconds()
+                    for t in ts], dtype=np.int64)  # fmt: skip
+    return (ts + off) // 86_400
+
+
+def _chg_ref(b, first_bar: bool) -> dict[str, np.ndarray]:
+    days = _local_days(b)
+    week = (days + 3) // 7  # 1970-01-01 was a Thursday: weeks counted from Mondays
+    month = days.astype("datetime64[D]").astype("datetime64[M]").astype(np.int64)
+    out = {}
+    for col, ids in (("bi_chg_week", week), ("bi_chg_month", month)):
+        out[col] = np.concatenate([[first_bar], ids[1:] != ids[:-1]]).astype(float)
+    return out
+
+
+def _first_bar_hyp(b, first_bar: bool) -> dict[str, np.ndarray]:
+    out = _chg_ref(b, first_bar)
+    if getattr(b, "k", 0) > 0:  # not the chart's first bar: compare with the export instead
+        for col in out:
+            out[col][0] = b.cols[col][0] if col in b.cols else out[col][0]
+    return out
+
+
 GROUPS: dict[str, dict[str, Hyp]] = {
     "alignment": {"aligned": lambda b: {"bi_bar_index": _idx(b).astype(float)}},
     "sum": {"window": lambda b: {"bi_sum": _rolling(_close(b), L, "skip", np.sum)}},
@@ -208,6 +283,30 @@ GROUPS: dict[str, dict[str, Hyp]] = {
     "obv": {
         "manual": lambda b: {"bi_obv": _cum_ref(np.sign(_change(_close(b))) * _volume(b), "skip")}
     },
+    "barstate": {
+        "closed_last": lambda b: _barstate_ref(b, live=False),
+        "live_last": lambda b: _barstate_ref(b, live=True),
+    },
+    "timeframe": {
+        "v6_spelling": lambda b: _tf_ref(b, "v6"),
+        "bare_spelling": lambda b: _tf_ref(b, "bare"),
+    },
+    "in_seconds": {
+        name: (lambda b, v=v: {"bi_secs_month": np.full(len(b), float(v))})
+        for name, v in (
+            ("month_2628003", 2_628_003),
+            ("month_30d", 2_592_000),
+            ("month_gregorian", 2_629_746),
+        )
+    },  # fmt: skip
+    "from_seconds": {
+        "exact_unit": lambda b: {"bi_from_secs_25h": np.full(len(b), 90_000.0)},
+        "rounded_day": lambda b: {"bi_from_secs_25h": np.full(len(b), 86_400.0)},
+    },
+    "tf_change": {
+        "first_bar_true": lambda b: _first_bar_hyp(b, True),
+        "first_bar_false": lambda b: _first_bar_hyp(b, False),
+    },
     "pvt": {
         "manual": lambda b: {
             "bi_pvt": _cum_ref(_change(_close(b)) / _prev(_close(b)) * _volume(b), "skip")
@@ -243,6 +342,13 @@ EXPECTED: dict[str, str] = {
     "cum_na": ta.DEFAULT_NA_POLICY["cum"],
     "obv": "manual",
     "pvt": "manual",
+    # Either is consistent with the runtime (`run(..., live_last_bar=...)`); the decision
+    # reports which state the last bar was in. See `decide`.
+    "barstate": "closed_last",
+    "timeframe": "v6_spelling",
+    "in_seconds": "month_2628003",
+    "from_seconds": "exact_unit",
+    "tf_change": "first_bar_true",
 }
 
 # Groups whose value at a row is a running total over all earlier bars.
@@ -286,6 +392,21 @@ def runtime_capture(ctx: Context) -> None:
     ctx.plot("bi_cum_na", t.cum("cumNa", src_na))
     ctx.plot("bi_obv", t.obv("obv"))
     ctx.plot("bi_pvt", t.pvt("pvt"))
+    bs, tf = ctx.barstate, ctx.timeframe
+    for col, flag in zip(_BARSTATE, (bs.isfirst, bs.islast, bs.ishistory, bs.isrealtime,
+                                     bs.isnew, bs.isconfirmed, bs.islastconfirmedhistory),
+                         strict=True):  # fmt: skip
+        ctx.plot(col, 1.0 if flag else 0.0)
+    ctx.plot("bi_tf_mult", tf.multiplier)
+    flags = (tf.isseconds * 1 + tf.isminutes * 2 + tf.isintraday * 4 + tf.isdaily * 8
+             + tf.isweekly * 16 + tf.ismonthly * 32 + tf.isdwm * 64)  # fmt: skip
+    ctx.plot("bi_tf_flags", flags)
+    ctx.plot("bi_tf_period_len", len(tf.period))
+    ctx.plot("bi_tf_secs", tf.in_seconds())
+    ctx.plot("bi_secs_month", tf.in_seconds("1M"))
+    ctx.plot("bi_from_secs_25h", tf.in_seconds(tf.from_seconds(90_000)))
+    ctx.plot("bi_chg_week", 1.0 if tf.change("1W") else 0.0)
+    ctx.plot("bi_chg_month", 1.0 if tf.change("1M") else 0.0)
 
 
 # ------------------------------------------------------------------ deciding
@@ -326,6 +447,21 @@ def _input_errors(b) -> dict[str, object]:
         "bi_cum_na": lambda bb, d: sens.cum_input_error(src, d),
         "bi_obv": lambda bb, d: sens.obv_input_error(close, vol, d),
         "bi_pvt": lambda bb, d: sens.pvt_input_error(close, vol, d),
+        # Chart state and calendar: independent of prices, so rounding cannot move them.
+        **dict.fromkeys(
+            (
+                *_BARSTATE,
+                "bi_tf_mult",
+                "bi_tf_flags",
+                "bi_tf_period_len",
+                "bi_tf_secs",
+                "bi_secs_month",
+                "bi_from_secs_25h",
+                "bi_chg_week",
+                "bi_chg_month",
+            ),
+            0.0,
+        ),  # fmt: skip
     }
 
 
@@ -362,14 +498,21 @@ def decide(export: TradingViewExport, input_rounding: float | None = None) -> li
             rounding = None if group == "pivots" else input_rounding
             reports[name] = check_export(export, specs, input_rounding=rounding)
         matching = tuple(h for h, r in reports.items() if r.passed)
+        expected = EXPECTED[group]
         note = ""
-        if group in ("obv", "pvt") and not np.isfinite(_volume(b)).any():
+        if group == "barstate" and len(matching) == 1:
+            # Both states are implemented (run(..., live_last_bar=...)); report which it was.
+            expected = matching[0]
+            note = "last bar was " + ("live" if expected == "live_last" else "closed")
+        if note:
+            pass
+        elif group in ("obv", "pvt") and not np.isfinite(_volume(b)).any():
             note = "no volume on this symbol; obv/pvt are na"
         elif group == "pivots" and input_rounding is not None:
             note = "no input-rounding allowance: rounding can create or remove a pivot"
         elif k and group in _CUMULATIVE:
             note = "running total anchored on the export (unseen history); increments checked"
-        out.append(GroupDecision(group, EXPECTED[group], matching, reports, str(ex), note))
+        out.append(GroupDecision(group, expected, matching, reports, str(ex), note))
     return out
 
 

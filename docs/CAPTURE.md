@@ -138,6 +138,8 @@ report. Things to know:
 | `strat_bar_index: …` under "Could not run" | The strategy script's bar-number column has `na` or gaps (the message names the first row). Usually the strategy wasn't calculated on every bar (e.g. it errored or was added after a partial load). Remove and re-add the strategy, let the chart finish loading, re-export. The other checks still ran. |
 | Semantics rows `loop_builtin` / `loop_userfn` say **runtime must change** | A real finding about calls inside `for` loops: send the report; `ctx.loop` gets changed to the matching hypothesis. |
 | Built-ins row `pivots` says "not decidable" | No equal highs or lows in this export, so the tie rule can't be seen. Normal on prices with many decimals; a stock on 1D usually has ties. |
+| Built-ins row `barstate` notes "last bar was live" | The export was taken while that bar was still forming (24/7 market or an open session). Expected and handled; both states are implemented. |
+| Built-ins row `tf_change` says **runtime must change** | Week/month boundaries differ from TradingView's (week start, or which time zone dates the bars). Send the report. |
 | Built-ins rows `obv` / `pvt` note "no volume" | The symbol has no volume (some indices, FX). Those rows can't be checked on it. |
 | `bar_index column is not consecutive` | Rows are missing or reordered in the CSV. Re-export without editing the file. |
 | `timeframe '1h' is not a Pine timeframe string` | Use Pine spelling: `60` rather than `1h`, `1D` rather than `D1`. |

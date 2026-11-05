@@ -74,7 +74,10 @@ def test_constants_and_titles_match_script():
 
 
 def test_capture_script_lint_clean():
-    assert lint_file(SCRIPT).findings == ()
+    r = lint_file(SCRIPT)
+    assert r.findings == ()
+    # The barstate probes measure exactly what the rule warns about; nothing else is waived.
+    assert {f.rule for f in r.suppressed} == {"barstate-realtime"} and len(r.suppressed) == 3
 
 
 def test_expected_covers_every_group_and_column(bars):

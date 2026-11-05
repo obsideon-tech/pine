@@ -331,6 +331,17 @@ decisions:
   builtins.cum_na: {expected: skip, tradingview: []}
   builtins.obv: {expected: manual, tradingview: []}
   builtins.pvt: {expected: manual, tradingview: []}
+  builtins.barstate:
+    expected: closed_last
+    tradingview: []
+    notes: either last-bar state is accepted and reported (run(..., live_last_bar=...))
+  builtins.timeframe: {expected: v6_spelling, tradingview: []}
+  builtins.in_seconds: {expected: month_2628003, tradingview: []}
+  builtins.from_seconds: {expected: exact_unit, tradingview: []}
+  builtins.tf_change:
+    expected: first_bar_true
+    tradingview: []
+    notes: weeks start Monday, dated in the exchange time zone; only 1D/1W/1M targets
   strategy.baseline: {expected: expected, tradingview: [doge_1d_strategy]}
   strategy.fill_timing: {expected: next_open, tradingview: [doge_1d_strategy]}
   strategy.path: {expected: nearest_extreme_first, tradingview: [doge_1d_strategy]}
